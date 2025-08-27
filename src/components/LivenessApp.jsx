@@ -977,7 +977,7 @@ function PadCard({ getIndicator }) {
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between">
-        <div className="text-lg font-semibold">Anti-Spoof Status</div>
+        <div className="text-lg font-semibold">Anti-Spoofing Status</div>
         <span className={`badge ${badge}`}>{ind.label}</span>
       </div>
       <div className="mt-2 text-sm">
