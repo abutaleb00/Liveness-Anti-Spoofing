@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import * as tf from "@tensorflow/tfjs"
 import * as faceLandmarksDetection from "@tensorflow-models/face-landmarks-detection"
+import "@tensorflow/tfjs-backend-webgl";
 
 /* ----------------- utils ----------------- */
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
@@ -220,7 +221,11 @@ export default function LivenessApp() {
   }), [])
 
   /* model load */
+  const IS_PROD = typeof import.meta !== "undefined" ? import.meta.env.PROD : false;
+  const FACE_RUNTIME = (import.meta.env?.VITE_FACE_RUNTIME || (IS_PROD ? "tfjs" : "mediapipe")).toLowerCase();
+
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         await tf.ready();
@@ -228,39 +233,34 @@ export default function LivenessApp() {
           try { await tf.setBackend("webgl"); await tf.ready(); } catch { }
         }
 
-        const tryMediapipe = () =>
-          faceLandmarksDetection.createDetector(
-            faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-            {
-              runtime: "mediapipe",
-              refineLandmarks: true,
-              // either a pinned CDN (see option 2), or your local path if you host files
-              solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619",
-            }
-          );
+        const Detector = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+        let detector;
 
-        let model;
-        try {
-          model = await tryMediapipe();
-        } catch (e) {
-          console.warn("Mediapipe runtime failed; falling back to TFJS", e);
-          model = await faceLandmarksDetection.createDetector(
-            faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-            {
-              runtime: "tfjs",
-              refineLandmarks: true,
-              maxFaces: 1,
-            }
-          );
+        if (FACE_RUNTIME === "tfjs") {
+          detector = await faceLandmarksDetection.createDetector(Detector, {
+            runtime: "tfjs",
+            refineLandmarks: true,
+            maxFaces: 1,
+          });
+        } else {
+          detector = await faceLandmarksDetection.createDetector(Detector, {
+            runtime: "mediapipe",
+            refineLandmarks: true,
+            // pin the version to avoid surprise updates
+            solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619",
+          });
         }
-        modelRef.current = model;
-        setModelReady(true);
+
+        if (!cancelled) {
+          modelRef.current = detector;
+          setModelReady(true);
+        }
       } catch (e) {
-        console.error(e);
+        console.error("Detector init failed:", e);
         setError(String(e));
       }
     })();
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => { cancelled = true; cancelAnimationFrame(rafRef.current); };
   }, []);
 
   /* camera control */
