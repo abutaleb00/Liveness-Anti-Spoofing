@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import * as tf from "@tensorflow/tfjs"
-import * as faceLandmarksDetection from "@tensorflow-models/face-landmarks-detection"
+import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-backend-webgl";
+import * as faceLandmarksDetection from "@tensorflow-models/face-landmarks-detection";
 
 /* ----------------- utils ----------------- */
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
@@ -221,39 +221,25 @@ export default function LivenessApp() {
   }), [])
 
   /* model load */
-  const IS_PROD = typeof import.meta !== "undefined" ? import.meta.env.PROD : false;
-  const FACE_RUNTIME = (import.meta.env?.VITE_FACE_RUNTIME || (IS_PROD ? "tfjs" : "mediapipe")).toLowerCase();
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         await tf.ready();
-        if (tf.backend().name !== "webgl") {
+        if (tf.getBackend() !== "webgl") {
           try { await tf.setBackend("webgl"); await tf.ready(); } catch { }
         }
 
-        const Detector = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
-        let detector;
-
-        if (FACE_RUNTIME === "tfjs") {
-          detector = await faceLandmarksDetection.createDetector(Detector, {
-            runtime: "tfjs",
-            refineLandmarks: true,
-            maxFaces: 1,
-          });
-        } else {
-          detector = await faceLandmarksDetection.createDetector(Detector, {
-            runtime: "mediapipe",
-            refineLandmarks: true,
-            // pin the version to avoid surprise updates
-            solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619",
-          });
-        }
+        // --- TFJS ONLY ---
+        const detector = await faceLandmarksDetection.createDetector(
+          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+          { runtime: "tfjs", refineLandmarks: true, maxFaces: 1 }
+        );
 
         if (!cancelled) {
           modelRef.current = detector;
           setModelReady(true);
+          console.info("[Face] runtime=tfjs, backend=", tf.getBackend());
         }
       } catch (e) {
         console.error("Detector init failed:", e);
