@@ -174,7 +174,7 @@ export default function LivenessApp() {
   const [faceCount, setFaceCount] = useState(0)
   const [photo, setPhoto] = useState(null)
 
-  // Guidance state (wrong-way / hints)
+  // NEW: Guidance state (for wrong-way / hints)
   const [guide, setGuide] = useState({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" })
 
   const blinkRef = useRef(0)
@@ -222,78 +222,69 @@ export default function LivenessApp() {
     NEUTRAL_CAPTURE_DELAY_MS: 1000, NEUTRAL_YAW: 0.06, NEUTRAL_HOLD_FRAMES: 5, NEUTRAL_MAR_DELTA: 0.04, NEUTRAL_TIMEOUT_MS: 2500,
   }), [])
 
-  /* ---------- runtime/env handling ---------- */
-  function readPublicEnv(keys) {
-    // Works for Vite and Next.js without throwing if process/import.meta are undefined
-    const im = (typeof import.meta !== "undefined" && import.meta.env) ? import.meta.env : {}
-    const pe = (typeof process !== "undefined" && process.env) ? process.env : {}
-    for (const k of keys) {
-      if (im && im[k] != null) return im[k]
-      if (pe && pe[k] != null) return pe[k]
-    }
-    return undefined
-  }
-  const runtimeEnv = (readPublicEnv([
-    "VITE_FACEMESH_RUNTIME",
-    "PUBLIC_FACEMESH_RUNTIME",
-    "NEXT_PUBLIC_FACEMESH_RUNTIME"
-  ]) || "tfjs").toLowerCase()
+  /* model load */
 
-  // Pin to a known-good MP build (exact version, trailing slash matters for asset paths)
-  const MP_FACEMESH_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/"
-
-  async function ensureTFReady() {
-    await tf.ready()
-    try {
-      if (tf.backend().name !== "webgl") {
-        await tf.setBackend("webgl")
-        await tf.ready()
-      }
-    } catch { /* ignore */ }
-  }
+  const MP_FACEMESH_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619";
 
   async function createFaceMeshDetector() {
-    if (typeof window === "undefined") return null // SSR guard
-    await ensureTFReady()
+    await tf.ready();
+    try {
+      if (tf.backend().name !== "webgl") {
+        await tf.setBackend("webgl");
+        await tf.ready();
+      }
+    } catch { }
 
-    const createTFJS = async () =>
-      faceLandmarksDetection.createDetector(
-        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-        { runtime: "tfjs", refineLandmarks: true, maxFaces: 1 }
-      )
-
-    // Prefer TFJS by default for Vercel stability; allow opt-in to mediapipe via env
-    if (runtimeEnv !== "mediapipe") return await createTFJS()
-
+    // Try MediaPipe runtime first (fast & light)
     try {
       const detector = await faceLandmarksDetection.createDetector(
         faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-        { runtime: "mediapipe", refineLandmarks: true, solutionPath: MP_FACEMESH_CDN }
-      )
-      return detector
+        {
+          runtime: "mediapipe",
+          refineLandmarks: true,
+          // IMPORTANT: pin the exact version to avoid constructor mismatch
+          solutionPath: MP_FACEMESH_CDN,
+          // Alternatively you can use locateFile:
+          // locateFile: (file) => `${MP_FACEMESH_CDN}/${file}`,
+        }
+      );
+      return detector;
     } catch (e) {
-      // Silent fallback in production
-      if (typeof process !== "undefined" && process.env && process.env.NODE_ENV !== "production") {
-        console.info("[FaceMesh] MP runtime unavailable, falling back to TFJS:", e?.message || e)
-      }
-      return await createTFJS()
+      console.warn("[FaceMesh] Mediapipe runtime failed, falling back to TFJS:", e);
     }
+
+    // Fallback: TFJS runtime (heavier but robust on Vercel)
+    const detector = await faceLandmarksDetection.createDetector(
+      faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+      {
+        runtime: "tfjs",
+        refineLandmarks: true,
+        // Optional: limit CPU on low-tier lambdas
+        maxFaces: 1,
+      }
+    );
+    return detector;
   }
 
-  /* model load */
   useEffect(() => {
-    let stop = false
-    ;(async () => {
+    let stop = false;
+    (async () => {
       try {
-        if (typeof window === "undefined") return
-        const model = await createFaceMeshDetector()
-        if (stop) return
-        modelRef.current = model
-        setModelReady(true)
-      } catch (e) { console.error(e); setError(String(e)) }
-    })()
-    return () => { stop = true; cancelAnimationFrame(rafRef.current) }
-  }, [])
+        // Guard against SSR
+        if (typeof window === "undefined") return;
+
+        const model = await createFaceMeshDetector();
+        if (stop) return;
+        modelRef.current = model;
+        setModelReady(true);
+      } catch (e) {
+        console.error(e);
+        setError(String(e));
+      }
+    })();
+
+    return () => { stop = true; cancelAnimationFrame(rafRef.current); };
+  }, []);
 
   /* camera control */
   async function startCamera() {
@@ -441,6 +432,7 @@ export default function LivenessApp() {
     if (!step) return { titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" }
     const yaw = smooth.current.YAW || 0
     const remainBlink = Math.max(0, (blinkTargetRef.current || cfg.BLINK_TARGET) - (blinkRef.current - st.stepStartBlink))
+    const stepInfo = INSTRUCTIONS[step]
 
     if (step === "left") {
       if (yaw < -cfg.YAW_MARGIN) {
@@ -482,7 +474,6 @@ export default function LivenessApp() {
       return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Great — done blinking", bn: "ভালো — ব্লিঙ্ক সম্পন্ন", severity: "ok", icon: "✅" }
     }
 
-    const stepInfo = INSTRUCTIONS[step]
     return { titleEn: stepInfo?.titleEn || "", titleBn: stepInfo?.titleBn || "", en: stepInfo?.en || "", bn: stepInfo?.bn || "", severity: "progress", icon: stepInfo?.icon || "ℹ️" }
   }
 
@@ -505,16 +496,11 @@ export default function LivenessApp() {
     const ctx = c.getContext("2d")
     c.width = v.videoWidth; c.height = v.videoHeight
 
-    // Always paint the live video to canvas (so users see themselves even if detection fails)
+    const faces = await modelRef.current.estimateFaces(v, { flipHorizontal: true })
     ctx.drawImage(v, 0, 0, c.width, c.height)
 
-    // Try to detect faces
-    let faces = []
-    try {
-      faces = await modelRef.current.estimateFaces(v, { flipHorizontal: true })
-    } catch { /* ignore transient errors */ }
-
     const nFaces = faces?.length || 0; if (nFaces !== faceCount) setFaceCount(nFaces)
+
     if (!faces || faces.length === 0) return
 
     const face = faces[0]
@@ -541,7 +527,6 @@ export default function LivenessApp() {
     smooth.current.HNORM = lerp(smooth.current.HNORM || hNorm, hNorm, a)
     smooth.current.CURVE = lerp(smooth.current.CURVE || curve, curve, a)
 
-    // optional: draw landmark dots
     drawMesh(ctx, face)
 
     if (phaseRef.current === "calibrate") {
@@ -573,7 +558,7 @@ export default function LivenessApp() {
     updateDepthSamples(pts)
     setSpoofScore(computePadFromSamples(stateRef.current))
 
-    // Update guidance each frame during run
+    // NEW: update guidance each frame during run
     setGuide(buildGuidance(stepsRef.current[currentStepRef.current], stateRef.current))
 
     // neutral capture
@@ -584,18 +569,18 @@ export default function LivenessApp() {
       const due = st.postCapture.due
       if (now >= due) {
         const neutralYaw = Math.abs(smooth.current.YAW) < cfg.NEUTRAL_YAW
-        const neutralSmile = (smooth.current.MAR < st.calib.mar + cfg.NEUTRAL_MAR_DELTA)
+        const neutralSmile = (smooth.current.MAR < st.calib.mar + st.calib.MAR_DELTA || smooth.current.MAR < st.calib.mar + 0.04)
         const eyesOk = smooth.current.EAR > (st.calib.ear - 0.03)
         if (neutralYaw && neutralSmile && eyesOk) {
           st.postCapture.hold++
-          if (st.postCapture.hold >= cfg.NEUTRAL_HOLD_FRAMES) {
+          if (st.postCapture.hold >= 5) {
             const shot = await capturePassport()
             setPhoto(shot?.data_url || null)
             st.postCapture.taken = true
           }
         } else {
           st.postCapture.hold = Math.max(0, st.postCapture.hold - 1)
-          if (now - due > cfg.NEUTRAL_TIMEOUT_MS) {
+          if (now - due > 2500) {
             const shot = await capturePassport()
             setPhoto(shot?.data_url || null)
             st.postCapture.taken = true
@@ -810,10 +795,32 @@ export default function LivenessApp() {
     const avg = (rMean + gMean + bMean) / 3 || 1
     const gR = avg / (rMean || 1), gG = avg / (gMean || 1), gB = avg / (bMean || 1)
 
+    const hist = new Uint32Array(256)
     for (let i = 0; i < n; i += 4) {
-      d[i] = clamp(Math.round(d[i] * gR), 0, 255)
-      d[i + 1] = clamp(Math.round(d[i + 1] * gG), 0, 255)
-      d[i + 2] = clamp(Math.round(d[i + 2] * gB), 0, 255)
+      let r = clamp(Math.round(d[i] * gR), 0, 255)
+      let g = clamp(Math.round(d[i + 1] * gG), 0, 255)
+      let b = clamp(Math.round(d[i + 2] * gB), 0, 255)
+      d[i] = r; d[i + 1] = g; d[i + 2] = b
+      const y = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b)
+      hist[y]++
+    }
+    const total = count
+    const lowCut = Math.round(total * 0.02), highCut = Math.round(total * 0.98)
+    let acc = 0, low = 0, high = 255
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= lowCut) { low = v; break } }
+    acc = 0
+    for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= total - highCut) { high = v; break } }
+    const eps = Math.max(1, high - low)
+    const gain = 255 / eps, bias = -low * gain
+    const gamma = 0.95
+
+    for (let i = 0; i < n; i += 4) {
+      let r = clamp((d[i] * gain + bias), 0, 255)
+      let g = clamp((d[i + 1] * gain + bias), 0, 255)
+      let b = clamp((d[i + 2] * gain + bias), 0, 255)
+      d[i] = Math.round(255 * Math.pow(r / 255, gamma))
+      d[i + 1] = Math.round(255 * Math.pow(g / 255, gamma))
+      d[i + 2] = Math.round(255 * Math.pow(b / 255, gamma))
     }
     ctx.putImageData(img, 0, 0)
   }
@@ -829,22 +836,15 @@ export default function LivenessApp() {
   const decided = finalPass !== null
   const liveNow = livenessScore
   const showPass = decided ? finalPass : (spoofScore >= 70 && liveNow >= 75)
+
   const activeStep = steps[currentStep]
 
   return (
     <div className="grid lg:grid-cols-5 gap-6">
       <div className="lg:col-span-3 space-y-3">
         <div className="relative rounded-2xl overflow-hidden card min-h-[360px]">
-          {/* Show the real video as a fallback background */}
-          <video
-            ref={videoRef}
-            className="absolute inset-0 w-full h-full object-cover"
-            autoPlay
-            muted
-            playsInline
-          />
-          {/* Canvas overlays on top */}
-          <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+          <video ref={videoRef} className="w-full h-auto hidden" muted playsInline />
+          <canvas ref={canvasRef} className="w-full h-auto block" />
 
           {/* Animated HUD */}
           <PromptHUD
@@ -882,7 +882,7 @@ export default function LivenessApp() {
           )}
         </div>
 
-        {/* Guidance strip (wrong direction / hints) */}
+        {/* NEW: Guidance strip (wrong direction / hints) */}
         {cameraOn && phase === "run" && !allDone && (
           <GuidanceStrip guide={guide} />
         )}
