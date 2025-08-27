@@ -223,56 +223,64 @@ export default function LivenessApp() {
   }), [])
 
   /* model load */
+  const RUNTIME = (process.env.NEXT_PUBLIC_FACEMESH_RUNTIME || "mediapipe").toLowerCase();
 
-  const MP_FACEMESH_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619";
+  // Pin to a known-good MP build (exact version, trailing slash matters for asset paths)
+  const MP_FACEMESH_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/";
 
-  async function createFaceMeshDetector() {
+  async function ensureTFReady() {
     await tf.ready();
     try {
       if (tf.backend().name !== "webgl") {
         await tf.setBackend("webgl");
         await tf.ready();
       }
-    } catch { }
+    } catch {/* ignore */ }
+  }
 
-    // Try MediaPipe runtime first (fast & light)
+  async function createFaceMeshDetector() {
+    if (typeof window === "undefined") return null; // SSR guard
+    await ensureTFReady();
+
+    // Helper to build TFJS detector
+    const createTFJS = async () =>
+      faceLandmarksDetection.createDetector(
+        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+        { runtime: "tfjs", refineLandmarks: true, maxFaces: 1 }
+      );
+
+    // If env says TFJS, skip MediaPipe entirely (no error, no warning).
+    if (RUNTIME !== "mediapipe") {
+      return await createTFJS();
+    }
+
+    // Try MediaPipe (CDN global). If it fails, silently fall back to TFJS.
     try {
       const detector = await faceLandmarksDetection.createDetector(
         faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
         {
           runtime: "mediapipe",
           refineLandmarks: true,
-          // IMPORTANT: pin the exact version to avoid constructor mismatch
+          // Either solutionPath OR locateFile. Both shown here; pick one (not both).
           solutionPath: MP_FACEMESH_CDN,
-          // Alternatively you can use locateFile:
-          // locateFile: (file) => `${MP_FACEMESH_CDN}/${file}`,
+          // locateFile: (file) => MP_FACEMESH_CDN + file,
         }
       );
       return detector;
     } catch (e) {
-      console.warn("[FaceMesh] Mediapipe runtime failed, falling back to TFJS:", e);
-    }
-
-    // Fallback: TFJS runtime (heavier but robust on Vercel)
-    const detector = await faceLandmarksDetection.createDetector(
-      faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-      {
-        runtime: "tfjs",
-        refineLandmarks: true,
-        // Optional: limit CPU on low-tier lambdas
-        maxFaces: 1,
+      // In production you might want no logs; keep a tiny note in dev only.
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[FaceMesh] MP runtime unavailable, using TFJS:", e?.message || e);
       }
-    );
-    return detector;
+      return await createTFJS();
+    }
   }
 
   useEffect(() => {
     let stop = false;
     (async () => {
       try {
-        // Guard against SSR
         if (typeof window === "undefined") return;
-
         const model = await createFaceMeshDetector();
         if (stop) return;
         modelRef.current = model;
@@ -282,7 +290,6 @@ export default function LivenessApp() {
         setError(String(e));
       }
     })();
-
     return () => { stop = true; cancelAnimationFrame(rafRef.current); };
   }, []);
 
