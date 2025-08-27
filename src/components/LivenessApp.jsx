@@ -3,74 +3,6 @@ import { motion, AnimatePresence } from "framer-motion"
 import * as tf from "@tensorflow/tfjs"
 import * as faceLandmarksDetection from "@tensorflow-models/face-landmarks-detection"
 
-// Add this at the top of your component
-const isVercel = process.env.NEXT_PUBLIC_VERCEL_ENV === 'production' ||
-  typeof window !== 'undefined' &&
-  window.location.hostname.includes('vercel.app');
-
-// Then modify your detector function
-async function createFaceMeshDetector() {
-  await tf.ready();
-
-  try {
-    if (tf.backend().name !== "webgl") {
-      await tf.setBackend("webgl");
-      await tf.ready();
-    }
-  } catch (error) {
-    console.warn("WebGL backend not available:", error);
-  }
-
-  // On Vercel, always use TFJS to avoid MediaPipe issues
-  if (isVercel) {
-    console.log("Vercel environment detected, using TFJS runtime");
-    try {
-      const detector = await faceLandmarksDetection.createDetector(
-        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-        {
-          runtime: "tfjs",
-          refineLandmarks: true,
-          maxFaces: 1,
-        }
-      );
-      return detector;
-    } catch (e) {
-      console.error("TFJS runtime failed on Vercel:", e);
-      throw e;
-    }
-  }
-
-  // For local development, try MediaPipe first, then fallback to TFJS
-  try {
-    const detector = await faceLandmarksDetection.createDetector(
-      faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-      {
-        runtime: "mediapipe",
-        refineLandmarks: true,
-        maxFaces: 1,
-        solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh",
-      }
-    );
-    return detector;
-  } catch (e) {
-    console.warn("MediaPipe runtime failed, falling back to TFJS:", e);
-
-    try {
-      const detector = await faceLandmarksDetection.createDetector(
-        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-        {
-          runtime: "tfjs",
-          refineLandmarks: true,
-          maxFaces: 1,
-        }
-      );
-      return detector;
-    } catch (tfjsError) {
-      console.error("Both MediaPipe and TFJS runtimes failed:", tfjsError);
-      throw tfjsError;
-    }
-  }
-}
 /* ----------------- utils ----------------- */
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v))
@@ -217,8 +149,7 @@ export default function LivenessApp() {
   const canvasRef = useRef(null)
   const rafRef = useRef(0)
   const modelRef = useRef(null)
-  const [retryCount, setRetryCount] = useState(0);
-  const [modelLoadAttempts, setModelLoadAttempts] = useState(0);
+
   const [modelReady, setModelReady] = useState(false)
   const [cameraOn, setCameraOn] = useState(false)
   const [cameraReady, setCameraReady] = useState(false)
@@ -292,125 +223,21 @@ export default function LivenessApp() {
   }), [])
 
   /* model load */
-
-  const MP_FACEMESH_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619";
-
-  async function createFaceMeshDetector() {
-    await tf.ready();
-
-    try {
-      if (tf.backend().name !== "webgl") {
-        await tf.setBackend("webgl");
-        await tf.ready();
-      }
-    } catch (error) {
-      console.warn("WebGL backend not available:", error);
-    }
-
-    // Use TFJS runtime only - more compatible with Vercel
-    try {
-      const detector = await faceLandmarksDetection.createDetector(
-        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-        {
-          runtime: "tfjs",
-          refineLandmarks: true,
-          maxFaces: 1,
-        }
-      );
-      return detector;
-    } catch (e) {
-      console.error("TFJS runtime failed:", e);
-      throw new Error("Failed to initialize face detection: " + e.message);
-    }
-  }
   useEffect(() => {
-    let stop = false;
-
-    const loadModel = async () => {
-      try {
-        if (typeof window === "undefined") return;
-
-        const model = await createFaceMeshDetector();
-        if (stop) return;
-        modelRef.current = model;
-        setModelReady(true);
-        setError("");
-      } catch (e) {
-        console.error("Model loading error:", e);
-        if (modelLoadAttempts < 2) {
-          setError(`Loading model (attempt ${modelLoadAttempts + 1}/3)...`);
-          setTimeout(() => setModelLoadAttempts(a => a + 1), 2000);
-        } else {
-          setError("Failed to load face detection model. Please refresh the page.");
-        }
-      }
-    };
-
-    loadModel();
-
-    return () => {
-      stop = true;
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [modelLoadAttempts]);
-  useEffect(() => {
-    // Preload MediaPipe resources
-    if (typeof window !== "undefined") {
-      const preloadScript = document.createElement('script');
-      preloadScript.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js';
-      preloadScript.async = true;
-      document.head.appendChild(preloadScript);
-
-      return () => {
-        if (document.head.contains(preloadScript)) {
-          document.head.removeChild(preloadScript);
-        }
-      };
-    }
-  }, []);
-  useEffect(() => {
-    let stop = false;
     (async () => {
       try {
-        if (typeof window === "undefined") return;
-
-        const model = await createFaceMeshDetector();
-        if (stop) return;
-        modelRef.current = model;
-        setModelReady(true);
-        setError("");
-      } catch (e) {
-        console.error(e);
-        if (retryCount < 3) {
-          setError(`Failed to load model. Retrying... (${retryCount + 1}/3)`);
-          setTimeout(() => setRetryCount(c => c + 1), 2000);
-        } else {
-          setError("Failed to load face detection model. Please refresh and try again.");
-        }
-      }
-    })();
-
-    return () => { stop = true; cancelAnimationFrame(rafRef.current); };
-  }, [retryCount]);
-  useEffect(() => {
-    let stop = false;
-    (async () => {
-      try {
-        // Guard against SSR
-        if (typeof window === "undefined") return;
-
-        const model = await createFaceMeshDetector();
-        if (stop) return;
-        modelRef.current = model;
-        setModelReady(true);
-      } catch (e) {
-        console.error(e);
-        setError(String(e));
-      }
-    })();
-
-    return () => { stop = true; cancelAnimationFrame(rafRef.current); };
-  }, []);
+        await tf.ready()
+        if (tf.backend().name !== "webgl") { try { await tf.setBackend("webgl"); await tf.ready() } catch { } }
+        const model = await faceLandmarksDetection.createDetector(
+          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+          { runtime: "mediapipe", refineLandmarks: true, solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh" }
+        )
+        modelRef.current = model
+        setModelReady(true)
+      } catch (e) { console.error(e); setError(String(e)) }
+    })()
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [])
 
   /* camera control */
   async function startCamera() {
@@ -989,29 +816,10 @@ export default function LivenessApp() {
               <div className="p-8 text-center">
                 <div className="text-xl font-semibold mb-2">Webcam is off</div>
                 <div className="text-slate-300 mb-4">Click start to begin liveness verification.</div>
-                <button
-                  className="btn"
-                  disabled={!modelReady}
-                  onClick={startCamera}
-                >
-                  {modelReady ? "Start verification" : `Loading model${'.'.repeat(modelLoadAttempts + 1)}`}
+                <button className="btn" disabled={!modelReady} onClick={startCamera}>
+                  {modelReady ? "Start verification" : "Loading model…"}
                 </button>
-                {error && (
-                  <div className="text-rose-400 mt-3 text-sm">
-                    {error}
-                    {modelLoadAttempts > 0 && (
-                      <button
-                        className="ml-2 text-blue-400 underline"
-                        onClick={() => {
-                          setModelLoadAttempts(0);
-                          setError("");
-                        }}
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </div>
-                )}
+                {error && <div className="text-rose-400 mt-3 text-sm">{error}</div>}
               </div>
             </div>
           )}
@@ -1169,7 +977,7 @@ function PadCard({ getIndicator }) {
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between">
-        <div className="text-lg font-semibold">Anti-Spoofing Status</div>
+        <div className="text-lg font-semibold">Anti-Spoof Status</div>
         <span className={`badge ${badge}`}>{ind.label}</span>
       </div>
       <div className="mt-2 text-sm">
@@ -1275,7 +1083,7 @@ function GuidanceStrip({ guide }) {
   const tone = guide.severity
   const toneCls = tone === "ok" ? "border-emerald-500/40 bg-emerald-900/30"
     : tone === "warn" ? "border-amber-500/40 bg-amber-900/30"
-      : "border-white/10 bg-slate-900/50"
+    : "border-white/10 bg-slate-900/50"
   return (
     <div className={`w-full rounded-2xl border px-4 py-3 shadow-lg backdrop-blur ${toneCls}`}>
       <div className="flex items-start gap-3">
