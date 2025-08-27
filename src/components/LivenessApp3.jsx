@@ -15,7 +15,7 @@ const percentile = (arr, p) => {
   const lo = Math.floor(idx), hi = Math.ceil(idx), t = idx - lo
   return a[lo] * (1 - t) + a[hi] * t
 }
-function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]] } return a }
+function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
 
 /* FaceMesh indices we use */
 const IDX = {
@@ -174,9 +174,6 @@ export default function LivenessApp() {
   const [faceCount, setFaceCount] = useState(0)
   const [photo, setPhoto] = useState(null)
 
-  // NEW: Guidance state (for wrong-way / hints)
-  const [guide, setGuide] = useState({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" })
-
   const blinkRef = useRef(0)
   const blinkTargetRef = useRef(3)
   const smooth = useRef({ EAR: 0, MAR: 0, YAW: 0, depthVar: 0, WNORM: 0, HNORM: 0, CURVE: 0 })
@@ -286,7 +283,6 @@ export default function LivenessApp() {
     st.stepStartTime = performance.now(); st.stepStartBlink = 0
     st.postCapture = { pending: false, due: 0, hold: 0, taken: false }
     finalizeScheduledRef.current = false
-    setGuide({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" })
   }
   function hardReset() {
     const newSteps = shuffle(STEP_BASE)
@@ -308,7 +304,6 @@ export default function LivenessApp() {
       postCapture: { pending: false, due: 0, hold: 0, taken: false },
     }
     finalizeScheduledRef.current = false
-    setGuide({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" })
   }
 
   /* ----- PAD + reasons ----- */
@@ -378,56 +373,6 @@ export default function LivenessApp() {
 
     const live = 0.50 * stepScore + 0.22 * timingScore + 0.14 * blinkScore + 0.14 * smoothnessScore
     return Math.round(clamp(live, 0, 100))
-  }
-
-  /* ---------- Guidance builder (EN/BN + severity) ---------- */
-  function buildGuidance(step, st) {
-    if (!step) return { titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" }
-    const yaw = smooth.current.YAW || 0
-    const remainBlink = Math.max(0, (blinkTargetRef.current || cfg.BLINK_TARGET) - (blinkRef.current - st.stepStartBlink))
-    const stepInfo = INSTRUCTIONS[step]
-
-    if (step === "left") {
-      if (yaw < -cfg.YAW_MARGIN) {
-        return { titleEn: "Wrong way", titleBn: "ভুল দিক", en: "Rotate LEFT", bn: "বামে ঘোরান", severity: "warn", icon: "↩️" }
-      }
-      if (yaw < cfg.YAW_RAD) {
-        return { titleEn: "Turn Left", titleBn: "বামে তাকান", en: "Rotate a bit more LEFT", bn: "আরও একটু বামে ঘোরান", severity: "progress", icon: "↩️" }
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Good — hold still", bn: "ভালো — স্থির থাকুন", severity: "ok", icon: "✅" }
-    }
-
-    if (step === "right") {
-      if (yaw > cfg.YAW_MARGIN) {
-        return { titleEn: "Wrong way", titleBn: "ভুল দিক", en: "Rotate RIGHT", bn: "ডানে ঘোরান", severity: "warn", icon: "↪️" }
-      }
-      if (yaw > -cfg.YAW_RAD) {
-        return { titleEn: "Turn Right", titleBn: "ডানে তাকান", en: "Rotate a bit more RIGHT", bn: "আরও একটু ডানে ঘোরান", severity: "progress", icon: "↪️" }
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Good — hold still", bn: "ভালো — স্থির থাকুন", severity: "ok", icon: "✅" }
-    }
-
-    if (step === "smile") {
-      const wDelta = (smooth.current.WNORM || 0) - (st.calib.mwBase || 0)
-      const curveDelta = (smooth.current.CURVE || 0) - (st.calib.curveBase || 0)
-      const marDelta = (smooth.current.MAR || 0) - (st.calib.mar || 0)
-      const wide = wDelta >= 0.035
-      const lifted = curveDelta >= 0.012
-      const open = marDelta >= 0.06 || (smooth.current.MAR || 0) > Math.max(0.28, st.calib.mar + 0.05)
-      if (!(wide || lifted || open)) {
-        return { titleEn: "Smile", titleBn: "হাসি", en: "Smile wider / lift corners", bn: "আরও হাসুন / মুখের কোণা তুলুন", severity: "progress", icon: "😊" }
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Looks good — hold", bn: "ভালো — ধরে রাখুন", severity: "ok", icon: "✅" }
-    }
-
-    if (step === "blink") {
-      if (remainBlink > 0) {
-        return { titleEn: "Blink", titleBn: "চোখের পলক", en: `Blink ${remainBlink} more time${remainBlink > 1 ? "s" : ""}`, bn: `আর ${remainBlink} বার পলক দিন`, severity: "progress", icon: "👀" }
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Great — done blinking", bn: "ভালো — ব্লিঙ্ক সম্পন্ন", severity: "ok", icon: "✅" }
-    }
-
-    return { titleEn: stepInfo?.titleEn || "", titleBn: stepInfo?.titleBn || "", en: stepInfo?.en || "", bn: stepInfo?.bn || "", severity: "progress", icon: stepInfo?.icon || "ℹ️" }
   }
 
   /* -------- RAF loop -------- */
@@ -511,9 +456,6 @@ export default function LivenessApp() {
     updateDepthSamples(pts)
     setSpoofScore(computePadFromSamples(stateRef.current))
 
-    // NEW: update guidance each frame during run
-    setGuide(buildGuidance(stepsRef.current[currentStepRef.current], stateRef.current))
-
     // neutral capture
     const st = stateRef.current
     const done = currentStepRef.current >= stepsRef.current.length
@@ -522,18 +464,18 @@ export default function LivenessApp() {
       const due = st.postCapture.due
       if (now >= due) {
         const neutralYaw = Math.abs(smooth.current.YAW) < cfg.NEUTRAL_YAW
-        const neutralSmile = (smooth.current.MAR < st.calib.mar + st.calib.MAR_DELTA || smooth.current.MAR < st.calib.mar + 0.04)
+        const neutralSmile = (smooth.current.MAR < st.calib.mar + cfg.NEUTRAL_MAR_DELTA)
         const eyesOk = smooth.current.EAR > (st.calib.ear - 0.03)
         if (neutralYaw && neutralSmile && eyesOk) {
           st.postCapture.hold++
-          if (st.postCapture.hold >= 5) {
+          if (st.postCapture.hold >= cfg.NEUTRAL_HOLD_FRAMES) {
             const shot = await capturePassport()
             setPhoto(shot?.data_url || null)
             st.postCapture.taken = true
           }
         } else {
           st.postCapture.hold = Math.max(0, st.postCapture.hold - 1)
-          if (now - due > 2500) {
+          if (now - due > cfg.NEUTRAL_TIMEOUT_MS) {
             const shot = await capturePassport()
             setPhoto(shot?.data_url || null)
             st.postCapture.taken = true
@@ -656,7 +598,7 @@ export default function LivenessApp() {
     const f = extractDepthFeatures(pts)
     stateRef.current.depthSamples.push(f)
     if (stateRef.current.depthSamples.length > 200) stateRef.current.depthSamples.shift()
-    smooth.current.depthVar = f.zRangeN || 0
+    smooth.current.depthVar = f.zRangeN
   }
 
   /* ------------- drawing / overlays ------------- */
@@ -776,6 +718,42 @@ export default function LivenessApp() {
       d[i + 2] = Math.round(255 * Math.pow(b / 255, gamma))
     }
     ctx.putImageData(img, 0, 0)
+
+    const src = ctx.getImageData(0, 0, w, h)
+    const sb = src.data
+    const blur = new Uint8ClampedArray(sb.length)
+    const k = [1, 2, 1, 2, 4, 2, 1, 2, 1]
+    for (let yy = 1; yy < h - 1; yy++) {
+      for (let xx = 1; xx < w - 1; xx++) {
+        let r = 0, g = 0, b = 0, ki = 0
+        for (let j = -1; j <= 1; j++) {
+          for (let i = -1; i <= 1; i++) {
+            const idx = ((yy + j) * w + (xx + i)) << 2
+            const kv = k[ki++]
+            r += sb[idx] * kv
+            g += sb[idx + 1] * kv
+            b += sb[idx + 2] * kv
+          }
+        }
+        const o = (yy * w + xx) << 2
+        blur[o] = r >> 4
+        blur[o + 1] = g >> 4
+        blur[o + 2] = b >> 4
+        blur[o + 3] = 255
+      }
+    }
+    const amount = 0.55
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i4 = (y * w + x) << 2
+        const r = sb[i4], g = sb[i4 + 1], b = sb[i4 + 2]
+        const br = blur[i4], bg = blur[i4 + 1], bb = blur[i4 + 2]
+        src.data[i4] = clamp(Math.round(r + amount * (r - br)), 0, 255)
+        src.data[i4 + 1] = clamp(Math.round(g + amount * (g - bg)), 0, 255)
+        src.data[i4 + 2] = clamp(Math.round(b + amount * (b - bb)), 0, 255)
+      }
+    }
+    ctx.putImageData(src, 0, 0)
   }
 
   async function copySnapshotBase64() {
@@ -835,15 +813,10 @@ export default function LivenessApp() {
           )}
         </div>
 
-        {/* NEW: Guidance strip (wrong direction / hints) */}
-        {cameraOn && phase === "run" && !allDone && (
-          <GuidanceStrip guide={guide} />
-        )}
-
         {/* Controls */}
         <div className="flex items-center gap-2">
           {!cameraOn ? (
-            ""
+            <button className="btn" disabled={!modelReady} onClick={startCamera}>Start</button>
           ) : (
             <>
               <button className="btn" onClick={restart}>Restart</button>
@@ -869,18 +842,8 @@ export default function LivenessApp() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
               <Metric label="Liveness Score" value={`${liveNow}/100`} ok={liveNow >= 75} />
               <Metric label="Anti-Spoof Score" value={`${spoofScore}/100`} ok={spoofScore >= 70} />
-              <Metric label="Depth Var (zRangeN)" value={(smooth.current.depthVar || 0).toFixed(4)} ok={(smooth.current.depthVar || 0) >= 0.02} />
+              <Metric label="Depth Var (zRangeN)" value={smooth.current.depthVar.toFixed(4)} ok={smooth.current.depthVar >= 0.02} />
               <Metric label="Blink Count" value={blinkCount} ok={blinkCount >= 2} />
-            </div>
-          </div>
-        )}
-
-        {/* Passport preview */}
-        {cameraOn && allDone && (
-          <div className="card p-4">
-            <div className="text-lg font-semibold mb-2">Captured Photo (Passport)</div>
-            <div className="rounded-xl overflow-hidden border border-slate-800 bg-white">
-              {photo ? <img src={photo} alt="passport" className="w-full h-auto block" /> : <div className="p-6 text-slate-600 text-sm">Preparing a neutral snapshot…</div>}
             </div>
           </div>
         )}
@@ -943,17 +906,38 @@ export default function LivenessApp() {
           </ul>
         </div>
 
+        {/* Captured passport photo */}
+        {cameraOn && allDone && (
+          <div className="card p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-lg font-semibold">Captured Photo (Passport)</div>
+              <button className="btn-outline" onClick={async () => setPhoto((await capturePassport())?.data_url || null)}>
+                Retake
+              </button>
+            </div>
+            <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-white">
+              {photo ? (
+                <img src={photo} alt="passport" className="w-full h-auto block" />
+              ) : (
+                <div className="p-6 text-slate-600 text-sm">
+                  Preparing a neutral snapshot… Please face the camera naturally.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Debug */}
         <div className="card p-4">
           <div className="text-lg font-semibold mb-2">Debug Panel</div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <div className="label">EAR:</div><div className="value">{(smooth.current.EAR || 0).toFixed(3)}</div>
-            <div className="label">MAR:</div><div className="value">{(smooth.current.MAR || 0).toFixed(3)}</div>
-            <div className="label">Mouth width (norm):</div><div className="value">{(smooth.current.WNORM || 0).toFixed(3)}</div>
-            <div className="label">Corner lift (curve):</div><div className="value">{(smooth.current.CURVE || 0).toFixed(3)}</div>
-            <div className="label">YAW(rad):</div><div className="value">{(smooth.current.YAW || 0).toFixed(3)}</div>
-            <div className="label">YAW(°):</div><div className="value">{(((smooth.current.YAW || 0) * 180) / Math.PI).toFixed(1)}</div>
-            <div className="label">Depth Var:</div><div className="value">{(smooth.current.depthVar || 0).toExponential(3)}</div>
+            <div className="label">EAR:</div><div className="value">{smooth.current.EAR.toFixed(3)}</div>
+            <div className="label">MAR:</div><div className="value">{smooth.current.MAR.toFixed(3)}</div>
+            <div className="label">Mouth width (norm):</div><div className="value">{smooth.current.WNORM.toFixed(3)}</div>
+            <div className="label">Corner lift (curve):</div><div className="value">{smooth.current.CURVE.toFixed(3)}</div>
+            <div className="label">YAW(rad):</div><div className="value">{smooth.current.YAW.toFixed(3)}</div>
+            <div className="label">YAW(°):</div><div className="value">{(smooth.current.YAW * 180 / Math.PI).toFixed(1)}</div>
+            <div className="label">Depth Var:</div><div className="value">{smooth.current.depthVar.toExponential(3)}</div>
           </div>
         </div>
       </div>
@@ -1077,27 +1061,6 @@ function PromptHUD({ phase, calibPct, cameraOn, cameraReady, faces, done, finalP
   )
 }
 
-/* ---------- GuidanceStrip (bilingual + severity) ---------- */
-function GuidanceStrip({ guide }) {
-  if (!guide || (!guide.en && !guide.bn)) return null
-  const tone = guide.severity
-  const toneCls = tone === "ok" ? "border-emerald-500/40 bg-emerald-900/30"
-    : tone === "warn" ? "border-amber-500/40 bg-amber-900/30"
-    : "border-white/10 bg-slate-900/50"
-  return (
-    <div className={`w-full rounded-2xl border px-4 py-3 shadow-lg backdrop-blur ${toneCls}`}>
-      <div className="flex items-start gap-3">
-        <div className="text-2xl leading-none select-none" aria-hidden>{guide.icon || "ℹ️"}</div>
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-slate-100">{guide.titleEn}<span className="text-slate-400"> · {guide.titleBn}</span></div>
-          {guide.en && <div className="text-[12.5px] text-slate-200 leading-tight mt-0.5">{guide.en}</div>}
-          {guide.bn && <div className="text-[12.5px] text-slate-300 leading-tight">{guide.bn}</div>}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /* -------- helpers used in LiveCard -------- */
 function liveReasons(st) {
   const reasons = []
@@ -1111,18 +1074,4 @@ function liveReasons(st) {
   }
   if (st.holdTotalFrames && (st.holdGoodFrames / st.holdTotalFrames) < 0.7) reasons.push("Hold not steady enough")
   return reasons.length ? reasons : ["All good"]
-}
-function padReasons(st) {
-  const arr = st.depthSamples; const reasons = []
-  if (arr.length >= 12) {
-    const zRangeN_p75 = percentile(arr.map(o => o.zRangeN), 0.75)
-    const planeN_p25 = percentile(arr.map(o => o.planeResN), 0.25)
-    const noseN_p50 = percentile(arr.map(o => o.noseProtrusionN), 0.50)
-    if (Number.isFinite(zRangeN_p75) && zRangeN_p75 < 0.02) reasons.push("Flat depth (possible screen)")
-    if (Number.isFinite(planeN_p25) && planeN_p25 < 0.01) reasons.push("Near-planar surface")
-    if (Number.isFinite(noseN_p50) && noseN_p50 < 0.07) reasons.push("Weak nose protrusion")
-  }
-  const timely = st.latencies.filter(t => t >= 0.18 && t <= 3.0).length
-  if (st.latencies.length > 0 && (timely / st.latencies.length) < 0.7) reasons.push("Prompt timing mismatch")
-  return reasons
 }
