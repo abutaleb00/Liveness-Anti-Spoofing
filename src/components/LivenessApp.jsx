@@ -223,21 +223,68 @@ export default function LivenessApp() {
   }), [])
 
   /* model load */
+
+  const MP_FACEMESH_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619";
+
+  async function createFaceMeshDetector() {
+    await tf.ready();
+    try {
+      if (tf.backend().name !== "webgl") {
+        await tf.setBackend("webgl");
+        await tf.ready();
+      }
+    } catch { }
+
+    // Try MediaPipe runtime first (fast & light)
+    try {
+      const detector = await faceLandmarksDetection.createDetector(
+        faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+        {
+          runtime: "mediapipe",
+          refineLandmarks: true,
+          // IMPORTANT: pin the exact version to avoid constructor mismatch
+          solutionPath: MP_FACEMESH_CDN,
+          // Alternatively you can use locateFile:
+          // locateFile: (file) => `${MP_FACEMESH_CDN}/${file}`,
+        }
+      );
+      return detector;
+    } catch (e) {
+      console.warn("[FaceMesh] Mediapipe runtime failed, falling back to TFJS:", e);
+    }
+
+    // Fallback: TFJS runtime (heavier but robust on Vercel)
+    const detector = await faceLandmarksDetection.createDetector(
+      faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+      {
+        runtime: "tfjs",
+        refineLandmarks: true,
+        // Optional: limit CPU on low-tier lambdas
+        maxFaces: 1,
+      }
+    );
+    return detector;
+  }
+
   useEffect(() => {
+    let stop = false;
     (async () => {
       try {
-        await tf.ready()
-        if (tf.backend().name !== "webgl") { try { await tf.setBackend("webgl"); await tf.ready() } catch { } }
-        const model = await faceLandmarksDetection.createDetector(
-          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-          { runtime: "mediapipe", refineLandmarks: true, solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh" }
-        )
-        modelRef.current = model
-        setModelReady(true)
-      } catch (e) { console.error(e); setError(String(e)) }
-    })()
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [])
+        // Guard against SSR
+        if (typeof window === "undefined") return;
+
+        const model = await createFaceMeshDetector();
+        if (stop) return;
+        modelRef.current = model;
+        setModelReady(true);
+      } catch (e) {
+        console.error(e);
+        setError(String(e));
+      }
+    })();
+
+    return () => { stop = true; cancelAnimationFrame(rafRef.current); };
+  }, []);
 
   /* camera control */
   async function startCamera() {
@@ -1083,7 +1130,7 @@ function GuidanceStrip({ guide }) {
   const tone = guide.severity
   const toneCls = tone === "ok" ? "border-emerald-500/40 bg-emerald-900/30"
     : tone === "warn" ? "border-amber-500/40 bg-amber-900/30"
-    : "border-white/10 bg-slate-900/50"
+      : "border-white/10 bg-slate-900/50"
   return (
     <div className={`w-full rounded-2xl border px-4 py-3 shadow-lg backdrop-blur ${toneCls}`}>
       <div className="flex items-start gap-3">
