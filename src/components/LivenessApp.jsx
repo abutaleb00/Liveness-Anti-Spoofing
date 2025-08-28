@@ -1,10 +1,9 @@
-// src/components/LivenessApp.jsx
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
 /* ----------------- utils ----------------- */
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const dist = (a, b) => Math.hypot((a?.x || 0) - (b?.x || 0), (a?.y || 0) - (b?.y || 0));
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const scale01 = (x, lo, hi) => clamp((x - lo) / (hi - lo + 1e-12), 0, 1);
@@ -15,9 +14,9 @@ const percentile = (arr, p) => {
   const lo = Math.floor(idx), hi = Math.ceil(idx), t = idx - lo;
   return a[lo] * (1 - t) + a[hi] * t;
 };
-function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-/* Face indices (same topology as FaceMesh/Tasks) */
+/* Face indices (MediaPipe topology) */
 const IDX = {
   leftEyeOuter: 33, rightEyeOuter: 263,
   L: { left: 33, right: 133, top1: 159, top2: 160, bot1: 145, bot2: 144 },
@@ -37,7 +36,7 @@ function mouthAspectRatio(pts) {
   const horizontal = dist(pts[IDX.mouthLeft], pts[IDX.mouthRight]) + 1e-6;
   return vertical / horizontal;
 }
-// +rawYaw > 0 when left cheek is closer (sign may need flip for UI)
+// rawYaw: positive when left cheek is closer (mirroring handled separately)
 function rawYaw(pts) {
   const L = pts[IDX.cheekL], R = pts[IDX.cheekR];
   if (!L || !R || typeof L.z !== "number" || typeof R.z !== "number") return 0;
@@ -52,40 +51,28 @@ function planeResidualNorm(pts, keys, faceW) {
     X.push([p.x / faceW, p.y / faceW, 1]); Z.push(p.z / faceW);
   }
   const n = X.length; if (n < 4) return 0;
-  const xtx = [[0,0,0],[0,0,0],[0,0,0]], xtz = [0,0,0];
-  for (let i=0;i<n;i++) {
-    const [x,y,o] = X[i], z = Z[i];
-    xtx[0][0]+=x*x; xtx[0][1]+=x*y; xtx[0][2]+=x*o;
-    xtx[1][0]+=y*x; xtx[1][1]+=y*y; xtx[1][2]+=y*o;
-    xtx[2][0]+=o*x; xtx[2][1]+=o*y; xtx[2][2]+=o*o;
-    xtz[0]+=x*z; xtz[1]+=y*z; xtz[2]+=o*z;
+  const xtx = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], xtz = [0, 0, 0];
+  for (let i = 0; i < n; i++) {
+    const [x, y, o] = X[i], z = Z[i];
+    xtx[0][0] += x * x; xtx[0][1] += x * y; xtx[0][2] += x * o;
+    xtx[1][0] += y * x; xtx[1][1] += y * y; xtx[1][2] += y * o;
+    xtx[2][0] += o * x; xtx[2][1] += o * y; xtx[2][2] += o * o;
+    xtz[0] += x * z; xtz[1] += y * z; xtz[2] += o * z;
   }
   const m = xtx;
-  const det = m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  const det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
   if (Math.abs(det) < 1e-9) return 0;
-  const inv = [[0,0,0],[0,0,0],[0,0,0]];
-  inv[0][0]=(m[1][1]*m[2][2]-m[1][2]*m[2][1])/det;
-  inv[0][1]=(m[0][2]*m[2][1]-m[0][1]*m[2][2])/det;
-  inv[0][2]=(m[0][1]*m[1][2]-m[0][2]*m[1][1])/det;
-  inv[1][0]=(m[1][2]*m[2][0]-m[1][0]*m[2][2])/det;
-  inv[1][1]=(m[0][0]*m[2][2]-m[0][2]*m[2][0])/det;
-  inv[1][2]=(m[0][2]*m[1][0]-m[0][0]*m[1][2])/det;
-  inv[2][0]=(m[1][0]*m[2][1]-m[1][1]*m[2][0])/det;
-  inv[2][1]=(m[0][1]*m[2][0]-m[0][0]*m[2][1])/det;
-  inv[2][2]=(m[0][0]*m[1][1]-m[0][1]*m[1][0])/det;
+  const inv = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  inv[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) / det; inv[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / det; inv[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / det;
+  inv[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) / det; inv[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / det; inv[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / det;
+  inv[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) / det; inv[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / det; inv[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / det;
   const beta = [
-    inv[0][0]*xtz[0] + inv[0][1]*xtz[1] + inv[0][2]*xtz[2],
-    inv[1][0]*xtz[0] + inv[1][1]*xtz[1] + inv[1][2]*xtz[2],
-    inv[2][0]*xtz[0] + inv[2][1]*xtz[1] + inv[2][2]*xtz[2],
+    inv[0][0] * xtz[0] + inv[0][1] * xtz[1] + inv[0][2] * xtz[2],
+    inv[1][0] * xtz[0] + inv[1][1] * xtz[1] + inv[1][2] * xtz[2],
+    inv[2][0] * xtz[0] + inv[2][1] * xtz[1] + inv[2][2] * xtz[2],
   ];
-  let se = 0;
-  for (let i=0;i<n;i++) {
-    const [x,y,o] = X[i], z = Z[i];
-    const zhat = beta[0]*x + beta[1]*y + beta[2]*o;
-    const r = z - zhat; se += r*r;
-  }
-  const rmse = Math.sqrt(se/n);
-  return rmse;
+  let se = 0; for (let i = 0; i < n; i++) { const [x, y, o] = X[i], z = Z[i]; const zhat = beta[0] * x + beta[1] * y + beta[2] * o; const r = z - zhat; se += r * r; }
+  return Math.sqrt(se / n);
 }
 function extractDepthFeatures(pts) {
   const keys = [IDX.noseTip, IDX.cheekL, IDX.cheekR, IDX.leftEyeOuter, IDX.rightEyeOuter, IDX.mouthTop, IDX.mouthBot];
@@ -103,7 +90,7 @@ function extractDepthFeatures(pts) {
 export const INSTRUCTIONS = {
   blink: { en: "Please blink your eyes naturally 3 times (one after another)", bn: "অনুগ্রহ করে স্বাভাবিকভাবে ৩ বার চোখের পলক দিন (একের পর এক)", titleEn: "Blink", titleBn: "চোখের পলক", icon: "👀" },
   smile: { en: "Please smile naturally and hold for 1 second", bn: "অনুগ্রহ করে স্বাভাবিকভাবে হাসুন এবং ১ সেকেন্ড ধরে রাখুন", titleEn: "Smile!", titleBn: "হাসুন!", icon: "😊" },
-  left:  { en: "Please turn your face CLEARLY to the left and hold for 2 seconds", bn: "অনুগ্রহ করে আপনার মুখ স্পষ্টভাবে বামে ঘুরান এবং ২ সেকেন্ড ধরে রাখুন", titleEn: "Turn Left ←", titleBn: "বামে তাকান ←", icon: "↩️" },
+  left: { en: "Please turn your face CLEARLY to the left and hold for 2 seconds", bn: "অনুগ্রহ করে আপনার মুখ স্পষ্টভাবে বামে ঘুরান এবং ২ সেকেন্ড ধরে রাখুন", titleEn: "Turn Left ←", titleBn: "বামে তাকান ←", icon: "↩️" },
   right: { en: "Please turn your face CLEARLY to the right and hold for 2 seconds", bn: "অনুগ্রহ করে আপনার মুখ স্পষ্টভাবে ডানে ঘুরান এবং ২ সেকেন্ড ধরে রাখুন", titleEn: "Turn Right →", titleBn: "ডানে তাকান →", icon: "↪️" },
 };
 const STEP_BASE = ["left", "right", "smile", "blink"];
@@ -114,12 +101,11 @@ function mouthFeatures(pts) {
   const wNorm = dist(pts[IDX.mouthLeft], pts[IDX.mouthRight]) / faceW;
   const hNorm = dist(pts[IDX.mouthTop], pts[IDX.mouthBot]) / faceW;
   const yCorners = (pts[IDX.mouthLeft].y + pts[IDX.mouthRight].y) / 2;
-  const yCenter  = (pts[IDX.mouthTop].y + pts[IDX.mouthBot].y) / 2;
-  const curve = (yCenter - yCorners) / faceW;  // corners higher (smile) → positive
+  const yCenter = (pts[IDX.mouthTop].y + pts[IDX.mouthBot].y) / 2;
+  const curve = (yCenter - yCorners) / faceW; // corners higher (smile) → positive
   return { wNorm, hNorm, curve };
 }
 
-/* ---------- Component ---------- */
 export default function LivenessApp() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -127,7 +113,8 @@ export default function LivenessApp() {
 
   const landmarkerRef = useRef(null);       // MediaPipe Tasks detector
   const procCanvasRef = useRef(null);       // low-res processing canvas
-  const lastTickTsRef = useRef(performance.now());
+  const fpsRef = useRef({ ema: 30 });       // EMA FPS for adaptive tuning
+  const perfRef = useRef({ inferEveryN: 2, procW: 640, procH: 360 });
 
   const [modelReady, setModelReady] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
@@ -158,164 +145,128 @@ export default function LivenessApp() {
   const blinkRef = useRef(0);
   const blinkTargetRef = useRef(3);
   const smooth = useRef({ EAR: 0, MAR: 0, YAW: 0, depthVar: 0, WNORM: 0, HNORM: 0, CURVE: 0 });
-  const lastBBoxRef = useRef(null); // for passport crop
+  const lastBBoxRef = useRef(null);
 
   const stateRef = useRef({
-    prevEyesClosed: false,
-    holdFrames: 0,
-    depthSamples: [],
+    prevEyesClosed: false, holdFrames: 0, depthSamples: [],
     calib: { samples: 0, secs: 0, earSum: 0, marSum: 0, mwSum: 0, curveSum: 0, ear: 0, mar: 0, mwBase: 0, curveBase: 0, EAR_OPEN_DYN: 0.21, EAR_CLOSED_DYN: 0.17 },
-    stepStartTime: performance.now(),
-    stepStartBlink: 0,
-    latencies: [],
+    stepStartTime: performance.now(), stepStartBlink: 0, latencies: [],
     blinkAmps: [], lastOpenEAR: 0, closing: false, minEAR: 1, lastBlinkTs: 0,
     holdGoodFrames: 0, holdTotalFrames: 0,
     passed: { left: false, right: false, smile: false, blink: false },
     postCapture: { pending: false, due: 0, hold: 0, taken: false },
+    firstOkTs: null, firstBlinkTs: null,
   });
 
   const finalizeScheduledRef = useRef(false);
 
-  const cfg = useMemo(() => ({
-    // NOTE: Y axes and indices same as FaceMesh; z is normalized depth (negative away from camera)
-    EAR_OPEN: 0.21, EAR_CLOSED: 0.17,
-    MAR_SMILE: 0.28, SMILE_MAR_DELTA: 0.05, SMILE_W_DELTA: 0.035, SMILE_CURVE_DELTA: 0.012, SMILE_MAR_DELTA2: 0.06,
-    YAW_FLIP: true, YAW_RAD: 0.10, YAW_MARGIN: 0.02,
-    HOLD_FRAMES: 18, HOLD_FRAMES_TURN: 24, MIN_STEP_TIME_S: 0.35,
-    BLINK_TARGET: 3, RESPONSE_MIN_S: 0.18, RESPONSE_MAX_S: 3.0,
-    BLINK_AMP_GOOD: [0.05, 0.12], BLINK_MIN_INTERVAL_MS: 250, BLINK_MIN_AMP: 0.045,
-    ZRANGE_GOOD: [0.02, 0.09], PLANE_GOOD: [0.01, 0.06], NOSE_GOOD: [0.07, 0.20],
-    CALIB_SECONDS: 1.0,
-    NEUTRAL_CAPTURE_DELAY_MS: 1000, NEUTRAL_YAW: 0.06, NEUTRAL_HOLD_FRAMES: 5, NEUTRAL_MAR_DELTA: 0.04,
-    PROC_W: 640, PROC_H: 360,        // low-res processing
-    INFER_EVERY_N: 2,                // ~30fps
-  }), []);
+  const cfg = useMemo(() => {
+    const isMobile = typeof navigator !== "undefined" && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+    return {
+      EAR_OPEN: 0.21, EAR_CLOSED: 0.17,
+      MAR_SMILE: 0.28, SMILE_MAR_DELTA: 0.05, SMILE_W_DELTA: isMobile ? 0.03 : 0.035, SMILE_CURVE_DELTA: 0.012, SMILE_MAR_DELTA2: 0.06,
+      YAW_FLIP: true, YAW_RAD: 0.10, YAW_MARGIN: 0.02,
+      HOLD_FRAMES: 18, HOLD_FRAMES_TURN: 24, MIN_STEP_TIME_S: 0.35,
+      BLINK_TARGET: 3, RESPONSE_MIN_S: 0.18, RESPONSE_MAX_S: isMobile ? 4.0 : 3.0,
+      BLINK_AMP_GOOD: [0.05, 0.12], BLINK_MIN_INTERVAL_MS: 250, BLINK_MIN_AMP: isMobile ? 0.04 : 0.045,
+      ZRANGE_GOOD: [0.02, 0.09], PLANE_GOOD: [0.01, 0.06], NOSE_GOOD: [0.07, 0.20],
+      CALIB_SECONDS: 1.0,
+      NEUTRAL_CAPTURE_DELAY_MS: 1000, NEUTRAL_YAW: 0.06, NEUTRAL_HOLD_FRAMES: 5, NEUTRAL_MAR_DELTA: 0.04,
+      PROC_W: isMobile ? 480 : 640, PROC_H: isMobile ? 270 : 360, INFER_EVERY_N: isMobile ? 3 : 2,
+      isMobile,
+    };
+  }, []);
 
-  /* ---------- load FaceLandmarker (self-hosted assets) ---------- */
+  /* ---------- load FaceLandmarker ---------- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const files = await FilesetResolver.forVisionTasks("/tasks"); // serve /tasks/*
+        const files = await FilesetResolver.forVisionTasks("/tasks"); // self-hosted
         const lm = await FaceLandmarker.createFromOptions(files, {
           baseOptions: { modelAssetPath: "/tasks/face_landmarker.task" },
           runningMode: "VIDEO",
           refineLandmarks: true,
           numFaces: 1,
           outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: true,
+          outputFacialTransformationMatrixes: false, // save CPU, we don't use it
         });
         if (cancelled) return;
         landmarkerRef.current = lm;
 
         // prepare processing canvas
         const pc = document.createElement("canvas");
-        pc.width = cfg.PROC_W; pc.height = cfg.PROC_H;
+        perfRef.current.procW = cfg.PROC_W; perfRef.current.procH = cfg.PROC_H; perfRef.current.inferEveryN = cfg.INFER_EVERY_N;
+        pc.width = perfRef.current.procW; pc.height = perfRef.current.procH;
         procCanvasRef.current = pc;
 
         setModelReady(true);
       } catch (e) {
         console.error("[FaceLandmarker] init failed:", e);
-        setError("Failed to load face model. Ensure /tasks assets are served.");
+        setError("Failed to load face model. Ensure /public/tasks assets exist.");
       }
     })();
     return () => { cancelled = true; cancelAnimationFrame(rafRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [cfg.PROC_H, cfg.PROC_W, cfg.INFER_EVERY_N]);
 
   /* camera control */
   async function startCamera() {
     try {
       if (!modelReady) { setError("Model not ready yet."); return; }
       const v = videoRef.current;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
+      const constraints = { video: { facingMode: { ideal: "user" }, width: { ideal: 1280, max: 1280 }, height: { ideal: 720, max: 720 }, frameRate: { ideal: 30, max: 30 }, resizeMode: "crop-and-scale" }, audio: false };
+      if (cfg.isMobile) { constraints.video.width = { ideal: 640, max: 640 }; constraints.video.height = { ideal: 480, max: 480 }; }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       v.srcObject = stream;
       setCameraReady(false);
-      await new Promise((res) => {
-        if (v.readyState >= 2) return res();
-        const onLoaded = () => { v.removeEventListener("loadedmetadata", onLoaded); res(); };
-        v.addEventListener("loadedmetadata", onLoaded, { once: true });
-      });
-      try { await v.play(); } catch {}
+      await new Promise((res) => { if (v.readyState >= 2) return res(); const onLoaded = () => { v.removeEventListener("loadedmetadata", onLoaded); res(); }; v.addEventListener("loadedmetadata", onLoaded, { once: true }); });
+      try { await v.play(); } catch { }
       setCameraOn(true); setCameraReady(true);
       hardReset(); setPhase("calibrate");
     } catch (e) { console.error(e); setError(String(e)); }
   }
   async function stopCamera() {
     try {
-      const v = videoRef.current;
-      const stream = v?.srcObject;
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      if (v) v.srcObject = null;
+      const v = videoRef.current; const stream = v?.srcObject; if (stream) stream.getTracks().forEach(t => t.stop()); if (v) v.srcObject = null;
       cancelAnimationFrame(rafRef.current);
       setCameraOn(false); setCameraReady(false); setFaceCount(0);
-      hardReset();
-      const c = canvasRef.current; if (c) { const ctx = c.getContext("2d"); ctx.clearRect(0, 0, c.width, c.height); }
+      hardReset(); const c = canvasRef.current; if (c) { const ctx = c.getContext("2d"); ctx.clearRect(0, 0, c.width, c.height); }
     } catch (e) { console.error(e); setError(String(e)); }
   }
   function restart() { if (cameraOn) softReset(); }
-
-  useEffect(() => {
-    return () => {
-      try {
-        const v = videoRef.current;
-        const stream = v?.srcObject;
-        if (stream) stream.getTracks().forEach(t => t.stop());
-      } catch {}
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
+  useEffect(() => () => { try { const v = videoRef.current; const s = v?.srcObject; if (s) s.getTracks().forEach(t => t.stop()); } catch { } cancelAnimationFrame(rafRef.current); }, []);
 
   /* resets */
   function softReset() {
-    const newSteps = shuffle(STEP_BASE);
-    setSteps(newSteps); stepsRef.current = newSteps;
-    setCurrentStep(0); currentStepRef.current = 0;
-    setHoldPct(0); setBlinkCount(0);
-    setLivenessScore(0); setSpoofScore(0); setFinalPass(null); finalPassRef.current = null;
-    setPhoto(null);
+    const newSteps = shuffle(STEP_BASE); setSteps(newSteps); stepsRef.current = newSteps;
+    setCurrentStep(0); currentStepRef.current = 0; setHoldPct(0); setBlinkCount(0);
+    setLivenessScore(0); setSpoofScore(0); setFinalPass(null); finalPassRef.current = null; setPhoto(null);
     blinkRef.current = 0; blinkTargetRef.current = 2 + Math.floor(Math.random() * 3);
     const st = stateRef.current;
-    st.prevEyesClosed = false; st.holdFrames = 0;
-    st.depthSamples = []; st.latencies = [];
+    st.prevEyesClosed = false; st.holdFrames = 0; st.depthSamples = []; st.latencies = [];
     st.blinkAmps = []; st.lastOpenEAR = 0; st.closing = false; st.minEAR = 1; st.lastBlinkTs = 0;
-    st.holdGoodFrames = 0; st.holdTotalFrames = 0;
-    st.passed = { left: false, right: false, smile: false, blink: false };
-    st.stepStartTime = performance.now(); st.stepStartBlink = blinkRef.current;
-    st.postCapture = { pending: false, due: 0, hold: 0, taken: false };
-    finalizeScheduledRef.current = false;
-    setGuide({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" });
+    st.holdGoodFrames = 0; st.holdTotalFrames = 0; st.passed = { left: false, right: false, smile: false, blink: false };
+    st.stepStartTime = performance.now(); st.stepStartBlink = blinkRef.current; st.postCapture = { pending: false, due: 0, hold: 0, taken: false }; st.firstOkTs = null; st.firstBlinkTs = null;
+    finalizeScheduledRef.current = false; setGuide({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" });
   }
   function hardReset() {
-    const newSteps = shuffle(STEP_BASE);
-    setSteps(newSteps); stepsRef.current = newSteps;
-    setCurrentStep(0); currentStepRef.current = 0;
-    setHoldPct(0); setBlinkCount(0);
-    setLivenessScore(0); setSpoofScore(0); setFinalPass(null); finalPassRef.current = null;
-    setPhoto(null); setCalibPct(0);
+    const newSteps = shuffle(STEP_BASE); setSteps(newSteps); stepsRef.current = newSteps;
+    setCurrentStep(0); currentStepRef.current = 0; setHoldPct(0); setBlinkCount(0);
+    setLivenessScore(0); setSpoofScore(0); setFinalPass(null); finalPassRef.current = null; setPhoto(null); setCalibPct(0);
     blinkRef.current = 0; blinkTargetRef.current = 3;
-    stateRef.current = {
-      prevEyesClosed: false, holdFrames: 0,
-      depthSamples: [],
-      calib: { samples: 0, secs: 0, earSum: 0, marSum: 0, mwSum: 0, curveSum: 0, ear: 0, mar: 0, mwBase: 0, curveBase: 0, EAR_OPEN_DYN: 0.21, EAR_CLOSED_DYN: 0.17 },
-      stepStartTime: performance.now(), stepStartBlink: 0,
-      latencies: [], blinkAmps: [], lastOpenEAR: 0, closing: false, minEAR: 1, lastBlinkTs: 0,
-      holdGoodFrames: 0, holdTotalFrames: 0,
-      passed: { left: false, right: false, smile: false, blink: false },
-      postCapture: { pending: false, due: 0, hold: 0, taken: false },
-    };
-    finalizeScheduledRef.current = false;
-    setGuide({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" });
+    stateRef.current = { prevEyesClosed: false, holdFrames: 0, depthSamples: [], calib: { samples: 0, secs: 0, earSum: 0, marSum: 0, mwSum: 0, curveSum: 0, ear: 0, mar: 0, mwBase: 0, curveBase: 0, EAR_OPEN_DYN: 0.21, EAR_CLOSED_DYN: 0.17 }, stepStartTime: performance.now(), stepStartBlink: 0, latencies: [], blinkAmps: [], lastOpenEAR: 0, closing: false, minEAR: 1, lastBlinkTs: 0, holdGoodFrames: 0, holdTotalFrames: 0, passed: { left: false, right: false, smile: false, blink: false }, postCapture: { pending: false, due: 0, hold: 0, taken: false }, firstOkTs: null, firstBlinkTs: null };
+    finalizeScheduledRef.current = false; setGuide({ titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" });
   }
 
-  /* -------- RAF loop (with throttled inference) -------- */
+  /* -------- RAF loop (throttled inference + adaptive quality) -------- */
   useEffect(() => {
     if (!cameraOn) return;
-    let frame = 0;
+    let frame = 0; let lastTs = performance.now();
     const loop = async () => {
+      const now = performance.now(); const dt = (now - lastTs) / 1000; lastTs = now;
+      const alpha = 0.15; const inst = 1 / Math.max(dt, 1 / 120);
+      fpsRef.current.ema = fpsRef.current.ema * (1 - alpha) + inst * alpha;
+      adaptQuality();
       await tick(frame++);
       setLivenessScore(computeLivenessComposite(stateRef.current));
       const v = videoRef.current;
@@ -327,126 +278,96 @@ export default function LivenessApp() {
     };
     loop();
     return () => cancelAnimationFrame(rafRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraOn]);
+
+  function adaptQuality() {
+    const fps = clamp(fpsRef.current.ema || 30, 5, 60);
+    const pc = procCanvasRef.current; if (!pc) return;
+    if (fps < 18 && perfRef.current.inferEveryN < 4) perfRef.current.inferEveryN = 4;
+    if (fps < 16 && perfRef.current.procW > 400) { perfRef.current.procW = 400; perfRef.current.procH = 225; pc.width = 400; pc.height = 225; }
+    if (fps > 32 && perfRef.current.inferEveryN > 2) perfRef.current.inferEveryN = 2;
+  }
 
   /* -------- main tick -------- */
   async function tick(frameCount) {
     const v = videoRef.current, c = canvasRef.current, pc = procCanvasRef.current;
     if (!v || !c || !pc || !landmarkerRef.current || v.readyState < 2) return;
 
-    const now = performance.now();
-    const dt = Math.max(1/120, (now - lastTickTsRef.current) / 1000);
-    lastTickTsRef.current = now;
-
-    // sizing
     c.width = v.videoWidth; c.height = v.videoHeight;
-
-    // draw mirrored video to display canvas
     const ctx = c.getContext("2d");
-    ctx.save(); ctx.translate(c.width, 0); ctx.scale(-1, 1);
-    ctx.drawImage(v, 0, 0, c.width, c.height);
-    ctx.restore();
+    ctx.save(); ctx.translate(c.width, 0); ctx.scale(-1, 1); ctx.drawImage(v, 0, 0, c.width, c.height); ctx.restore();
 
-    // low-res processing (non-mirrored)
     const pctx = pc.getContext("2d");
     pctx.drawImage(v, 0, 0, pc.width, pc.height);
 
-    // throttle inference to ~30fps
-    if (frameCount % cfg.INFER_EVERY_N === 0) {
-      const res = landmarkerRef.current.detectForVideo(pc, now);
-      const faces = res.faceLandmarks || [];
-      const nFaces = faces.length; if (nFaces !== faceCount) setFaceCount(nFaces);
-      if (!nFaces) return;
+    if (frameCount % perfRef.current.inferEveryN !== 0) return;
 
-      // map normalized 0..1 -> display canvas pixels; scale z by width
-      const lms = faces[0].map(p => ({ x: p.x * c.width, y: p.y * c.height, z: (p.z ?? 0) * c.width }));
-      const pts = lms; // 3D-like (z in image width units)
-      const pts2D = lms;
+    const now = performance.now();
+    const res = landmarkerRef.current.detectForVideo(pc, now);
+    const faces = res.faceLandmarks || [];
+    const nFaces = faces.length; if (nFaces !== faceCount) setFaceCount(nFaces);
+    if (!nFaces) return;
 
-      // bbox for photo capture (from display coords)
-      let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
-      for (const p of pts2D) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
-      lastBBoxRef.current = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    const lms = faces[0].map(p => ({ x: p.x * c.width, y: p.y * c.height, z: (p.z ?? 0) * c.width }));
+    const pts = lms; const pts2D = lms;
 
-      // features
-      const EAR = (eyeAspectRatio(pts, IDX.L) + eyeAspectRatio(pts, IDX.R)) / 2;
-      const MAR = mouthAspectRatio(pts);
-      const YAW = (cfg.YAW_FLIP ? -1 : 1) * rawYaw(pts);
-      const { wNorm, hNorm, curve } = mouthFeatures(pts);
+    // bbox for passport capture
+    let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    for (const p of pts2D) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
+    lastBBoxRef.current = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 
-      const a = 0.22;
-      smooth.current.EAR   = lerp(smooth.current.EAR   || EAR,   EAR,   a);
-      smooth.current.MAR   = lerp(smooth.current.MAR   || MAR,   MAR,   a);
-      smooth.current.YAW   = lerp(smooth.current.YAW   || YAW,   YAW,   a);
-      smooth.current.WNORM = lerp(smooth.current.WNORM || wNorm, wNorm, a);
-      smooth.current.HNORM = lerp(smooth.current.HNORM || hNorm, hNorm, a);
-      smooth.current.CURVE = lerp(smooth.current.CURVE || curve, curve, a);
+    const EAR = (eyeAspectRatio(pts, IDX.L) + eyeAspectRatio(pts, IDX.R)) / 2;
+    const MAR = mouthAspectRatio(pts);
+    const YAW = (cfg.YAW_FLIP ? -1 : 1) * rawYaw(pts);
+    const { wNorm, hNorm, curve } = mouthFeatures(pts);
 
-      drawMesh(ctx, pts, c.width, c.height);
+    const a = 0.22;
+    smooth.current.EAR = lerp(smooth.current.EAR || EAR, EAR, a);
+    smooth.current.MAR = lerp(smooth.current.MAR || MAR, MAR, a);
+    smooth.current.YAW = lerp(smooth.current.YAW || YAW, YAW, a);
+    smooth.current.WNORM = lerp(smooth.current.WNORM || wNorm, wNorm, a);
+    smooth.current.HNORM = lerp(smooth.current.HNORM || hNorm, hNorm, a);
+    smooth.current.CURVE = lerp(smooth.current.CURVE || curve, curve, a);
 
-      // phases
-      if (phaseRef.current === "calibrate") {
-        const st = stateRef.current;
-        st.calib.samples += 1; st.calib.secs += dt;
-        st.calib.earSum += smooth.current.EAR;
-        st.calib.marSum += smooth.current.MAR;
-        st.calib.mwSum += smooth.current.WNORM;
-        st.calib.curveSum += smooth.current.CURVE;
+    drawMesh(ctx, pts, c.width, c.height);
 
-        const pct = Math.min(100, Math.round((st.calib.secs / cfg.CALIB_SECONDS) * 100)); setCalibPct(pct);
-        if (st.calib.secs >= cfg.CALIB_SECONDS) {
-          st.calib.ear = st.calib.earSum / Math.max(1, st.calib.samples);
-          st.calib.mar = st.calib.marSum / Math.max(1, st.calib.samples);
-          st.calib.mwBase = st.calib.mwSum / Math.max(1, st.calib.samples);
-          st.calib.curveBase = st.calib.curveSum / Math.max(1, st.calib.samples);
-
-          // safe guards if anything went weird
-          if (!Number.isFinite(st.calib.ear))   st.calib.ear = 0.28;
-          if (!Number.isFinite(st.calib.mar))   st.calib.mar = 0.25;
-          if (!Number.isFinite(st.calib.mwBase)) st.calib.mwBase = 0.45;
-          if (!Number.isFinite(st.calib.curveBase)) st.calib.curveBase = 0.00;
-
-          st.calib.EAR_CLOSED_DYN = Math.max(cfg.EAR_CLOSED, st.calib.ear - 0.06);
-          st.calib.EAR_OPEN_DYN   = Math.max(cfg.EAR_OPEN,   st.calib.ear - 0.02);
-          setPhase("run");
-          st.stepStartTime = performance.now();
-          st.stepStartBlink = blinkRef.current;
-          blinkTargetRef.current = 2 + Math.floor(Math.random() * 3);
-        }
-        return;
-      }
-
-      updateBlink(EAR);
-      updateStepProgress();
-      updateDepthSamples(pts);
-      // PAD with fallback (never NaN)
-      const padScore = computePadRobust(stateRef.current);
-      setSpoofScore(Number.isFinite(padScore) ? padScore : 0);
-
-      setGuide(buildGuidance(stepsRef.current[currentStepRef.current], stateRef.current));
-
-      // neutral capture after steps
+    if (phaseRef.current === "calibrate") {
       const st = stateRef.current;
-      const done = currentStepRef.current >= stepsRef.current.length;
-      if (done && st.postCapture.pending && !st.postCapture.taken) {
-        const due = st.postCapture.due;
-        if (now >= due) {
-          const neutralYaw   = Math.abs(smooth.current.YAW) < cfg.NEUTRAL_YAW;
-          const neutralSmile = smooth.current.MAR < (st.calib.mar + (cfg.NEUTRAL_MAR_DELTA ?? 0.04));
-          const eyesOk       = smooth.current.EAR > (st.calib.ear - 0.03);
-          if (neutralYaw && neutralSmile && eyesOk) {
-            st.postCapture.hold++;
-            if (st.postCapture.hold >= cfg.NEUTRAL_HOLD_FRAMES) {
-              const shot = await capturePassport(); setPhoto(shot?.data_url || null); st.postCapture.taken = true;
-            }
-          } else {
-            st.postCapture.hold = Math.max(0, st.postCapture.hold - 1);
-            if (now - due > 2500) {
-              const shot = await capturePassport(); setPhoto(shot?.data_url || null); st.postCapture.taken = true;
-            }
-          }
-        }
+      st.calib.samples += 1; st.calib.secs += (1 / (60 / perfRef.current.inferEveryN));
+      st.calib.earSum += smooth.current.EAR; st.calib.marSum += smooth.current.MAR; st.calib.mwSum += smooth.current.WNORM; st.calib.curveSum += smooth.current.CURVE;
+      const pct = Math.min(100, Math.round((st.calib.secs / cfg.CALIB_SECONDS) * 100)); setCalibPct(pct);
+      if (st.calib.secs >= cfg.CALIB_SECONDS) {
+        st.calib.ear = st.calib.earSum / Math.max(1, st.calib.samples);
+        st.calib.mar = st.calib.marSum / Math.max(1, st.calib.samples);
+        st.calib.mwBase = st.calib.mwSum / Math.max(1, st.calib.samples);
+        st.calib.curveBase = st.calib.curveSum / Math.max(1, st.calib.samples);
+        if (!Number.isFinite(st.calib.ear)) st.calib.ear = 0.28;
+        if (!Number.isFinite(st.calib.mar)) st.calib.mar = 0.25;
+        if (!Number.isFinite(st.calib.mwBase)) st.calib.mwBase = 0.45;
+        if (!Number.isFinite(st.calib.curveBase)) st.calib.curveBase = 0.00;
+        st.calib.EAR_CLOSED_DYN = Math.max(cfg.EAR_CLOSED, st.calib.ear - 0.06);
+        st.calib.EAR_OPEN_DYN = Math.max(cfg.EAR_OPEN, st.calib.ear - 0.02);
+        setPhase("run"); st.stepStartTime = performance.now(); st.stepStartBlink = blinkRef.current; blinkTargetRef.current = 2 + Math.floor(Math.random() * 3);
+      }
+      return;
+    }
+
+    updateBlink(EAR);
+    updateStepProgress();
+    updateDepthSamples(pts);
+    const padScore = computePadRobust(stateRef.current);
+    setSpoofScore(Number.isFinite(padScore) ? padScore : 0);
+    setGuide(buildGuidance(stepsRef.current[currentStepRef.current], stateRef.current));
+
+    // neutral capture
+    const st = stateRef.current; const done = currentStepRef.current >= stepsRef.current.length;
+    if (done && st.postCapture.pending && !st.postCapture.taken) {
+      const due = st.postCapture.due; if (now >= due) {
+        const neutralYaw = Math.abs(smooth.current.YAW) < cfg.NEUTRAL_YAW;
+        const neutralSmile = smooth.current.MAR < (st.calib.mar + (cfg.NEUTRAL_MAR_DELTA ?? 0.04));
+        const eyesOk = smooth.current.EAR > (st.calib.ear - 0.03);
+        if (neutralYaw && neutralSmile && eyesOk) { st.postCapture.hold++; if (st.postCapture.hold >= cfg.NEUTRAL_HOLD_FRAMES) { const shot = await capturePassport(); setPhoto(shot?.data_url || null); st.postCapture.taken = true; } }
+        else { st.postCapture.hold = Math.max(0, st.postCapture.hold - 1); if (now - due > 2500) { const shot = await capturePassport(); setPhoto(shot?.data_url || null); st.postCapture.taken = true; } }
       }
     }
   }
@@ -454,22 +375,18 @@ export default function LivenessApp() {
   function updateBlink(EAR) {
     const st = stateRef.current;
     const eyesClosed = EAR < (st.calib?.EAR_CLOSED_DYN ?? cfg.EAR_CLOSED);
-    const reOpen     = EAR > (st.calib?.EAR_OPEN_DYN   ?? cfg.EAR_OPEN);
-
+    const reOpen = EAR > (st.calib?.EAR_OPEN_DYN ?? cfg.EAR_OPEN);
     if (!eyesClosed) st.lastOpenEAR = EAR;
     if (eyesClosed && !st.prevEyesClosed) { st.prevEyesClosed = true; st.closing = true; st.minEAR = EAR; }
     else if (eyesClosed && st.closing) { if (EAR < st.minEAR) st.minEAR = EAR; }
-
     if (st.prevEyesClosed && reOpen) {
       st.prevEyesClosed = false;
       if (st.closing) {
-        const open = st.lastOpenEAR || st.calib.ear || EAR;
-        const amp  = Math.max(0, open - st.minEAR);
+        const open = st.lastOpenEAR || st.calib.ear || EAR; const amp = Math.max(0, open - st.minEAR);
         const now = performance.now(); const dt = now - (st.lastBlinkTs || 0);
         if (amp >= cfg.BLINK_MIN_AMP && dt >= cfg.BLINK_MIN_INTERVAL_MS) {
-          st.blinkAmps.push(amp); if (st.blinkAmps.length > 20) st.blinkAmps.shift();
-          st.lastBlinkTs = now;
-          blinkRef.current += 1; setBlinkCount(b => b + 1);
+          st.blinkAmps.push(amp); if (st.blinkAmps.length > 20) st.blinkAmps.shift(); st.lastBlinkTs = now; blinkRef.current += 1; setBlinkCount(b => b + 1);
+          if (!st.firstBlinkTs) st.firstBlinkTs = now;
         }
       }
       st.closing = false;
@@ -479,38 +396,29 @@ export default function LivenessApp() {
   function getHoldFramesForStep(step) { return (step === "left" || step === "right") ? cfg.HOLD_FRAMES_TURN : cfg.HOLD_FRAMES; }
 
   function updateStepProgress() {
-    const st = stateRef.current;
-    const step = stepsRef.current[currentStepRef.current];
-    if (!step) return;
-
-    const timeSinceStart = (performance.now() - st.stepStartTime) / 1000;
-    const minGate = Math.max(cfg.RESPONSE_MIN_S, cfg.MIN_STEP_TIME_S);
-
+    const st = stateRef.current; const step = stepsRef.current[currentStepRef.current]; if (!step) return;
+    const timeSinceStart = (performance.now() - st.stepStartTime) / 1000; const minGate = Math.max(cfg.RESPONSE_MIN_S, cfg.MIN_STEP_TIME_S);
     let ok = false;
-    if (step === "left")       { ok = smooth.current.YAW > (cfg.YAW_RAD + cfg.YAW_MARGIN); }
+    if (step === "left") { ok = smooth.current.YAW > (cfg.YAW_RAD + cfg.YAW_MARGIN); }
     else if (step === "right") { ok = smooth.current.YAW < -(cfg.YAW_RAD + cfg.YAW_MARGIN); }
     else if (step === "smile") {
       const wDelta = (smooth.current.WNORM || 0) - (st.calib.mwBase || 0);
       const curveDelta = (smooth.current.CURVE || 0) - (st.calib.curveBase || 0);
       const marDelta = (smooth.current.MAR || 0) - (st.calib.mar || 0);
-      ok = wDelta >= cfg.SMILE_W_DELTA || curveDelta >= cfg.SMILE_CURVE_DELTA || marDelta >= cfg.SMILE_MAR_DELTA2
-        || (smooth.current.MAR || 0) > Math.max(cfg.MAR_SMILE, st.calib.mar + cfg.SMILE_MAR_DELTA);
+      ok = wDelta >= cfg.SMILE_W_DELTA || curveDelta >= cfg.SMILE_CURVE_DELTA || marDelta >= cfg.SMILE_MAR_DELTA2 || (smooth.current.MAR || 0) > Math.max(cfg.MAR_SMILE, st.calib.mar + cfg.SMILE_MAR_DELTA);
     } else if (step === "blink") {
-      const blinksInStep = blinkRef.current - st.stepStartBlink;
-      const target = blinkTargetRef.current || cfg.BLINK_TARGET;
+      const blinksInStep = blinkRef.current - st.stepStartBlink; const target = blinkTargetRef.current || cfg.BLINK_TARGET;
       setHoldPct(clamp((blinksInStep / target) * 100, 0, 100));
+      if (blinksInStep >= 1 && !st.firstBlinkTs) st.firstBlinkTs = performance.now();
       if (blinksInStep >= target && timeSinceStart >= minGate) {
-        st.passed.blink = true;
-        const latency = (performance.now() - st.stepStartTime) / 1000;
-        st.latencies.push(latency);
-        nextStep();
+        st.passed.blink = true; const first = st.firstBlinkTs || performance.now(); const latencyFirst = (first - st.stepStartTime) / 1000; st.latencies.push(latencyFirst); nextStep();
       }
       return;
     }
 
-    if (ok) st.holdGoodFrames++;
-    st.holdTotalFrames++;
+    if (ok && !st.firstOkTs) st.firstOkTs = performance.now();
 
+    if (ok) st.holdGoodFrames++; st.holdTotalFrames++;
     const neededHold = getHoldFramesForStep(step);
     if (timeSinceStart < minGate) { setHoldPct(clamp((st.holdFrames / neededHold) * 100, 0, 100)); return; }
 
@@ -518,261 +426,114 @@ export default function LivenessApp() {
     setHoldPct(clamp((st.holdFrames / neededHold) * 100, 0, 100));
 
     if (st.holdFrames >= neededHold) {
-      st.holdFrames = 0;
-      st.passed[step] = true;
-      const latency = (performance.now() - st.stepStartTime) / 1000;
-      st.latencies.push(latency);
+      st.holdFrames = 0; st.passed[step] = true;
+      const first = st.firstOkTs || performance.now(); const latencyFirst = (first - st.stepStartTime) / 1000; st.latencies.push(latencyFirst);
       nextStep();
     }
   }
 
   function nextStep() {
-    const st = stateRef.current;
-    currentStepRef.current += 1;
+    const st = stateRef.current; currentStepRef.current += 1;
     setCurrentStep(i => {
       const n = i + 1;
       if (n >= stepsRef.current.length) {
-        const pad = computePadRobust(st);
-        const pass = (pad >= 70) && (computeLivenessComposite(st) >= 75);
-        setFinalPass(pass); finalPassRef.current = pass;
-        st.postCapture = { pending: true, due: performance.now() + cfg.NEUTRAL_CAPTURE_DELAY_MS, hold: 0, taken: false };
+        const pad = computePadRobust(st); const pass = (pad >= 70) && (computeLivenessComposite(st) >= 75);
+        setFinalPass(pass); finalPassRef.current = pass; st.postCapture = { pending: true, due: performance.now() + cfg.NEUTRAL_CAPTURE_DELAY_MS, hold: 0, taken: false };
         scheduleFinalizeResults();
       } else {
-        st.stepStartTime = performance.now();
-        st.stepStartBlink = blinkRef.current;
-        st.holdFrames = 0;
+        st.stepStartTime = performance.now(); st.stepStartBlink = blinkRef.current; st.holdFrames = 0; st.firstOkTs = null; st.firstBlinkTs = null;
       }
       return n;
     });
   }
 
   function scheduleFinalizeResults() {
-    if (finalizeScheduledRef.current) return;
-    finalizeScheduledRef.current = true;
-    setTimeout(() => {
-      const st = stateRef.current;
-      const padNow = computePadRobust(st);
-      setSpoofScore(padNow);
-      const passNow = padNow >= 70 && (computeLivenessComposite(st) >= 75);
-      setFinalPass(passNow); finalPassRef.current = passNow;
-    }, 700);
+    if (finalizeScheduledRef.current) return; finalizeScheduledRef.current = true;
+    setTimeout(() => { const st = stateRef.current; const padNow = computePadRobust(st); setSpoofScore(padNow); const passNow = padNow >= 70 && (computeLivenessComposite(st) >= 75); setFinalPass(passNow); finalPassRef.current = passNow; }, 700);
   }
 
   function updateDepthSamples(pts) {
-    const f = extractDepthFeatures(pts);
-    stateRef.current.depthSamples.push(f);
-    if (stateRef.current.depthSamples.length > 200) stateRef.current.depthSamples.shift();
-    smooth.current.depthVar = f.zRangeN || 0;
+    const f = extractDepthFeatures(pts); stateRef.current.depthSamples.push(f); if (stateRef.current.depthSamples.length > 200) stateRef.current.depthSamples.shift(); smooth.current.depthVar = f.zRangeN || 0;
   }
 
-  /* ----- PAD: 3D when available, otherwise a 2D surrogate (never NaN) ----- */
+  /* ----- PAD: 3D when available, otherwise 2D surrogate ----- */
   function computePadRobust(st) {
     const has3D = st.depthSamples.length >= 12;
     if (has3D) {
-      const arr = st.depthSamples;
-      const zRangeN_p75 = percentile(arr.map(o => o.zRangeN), 0.75);
-      const planeN_p25  = percentile(arr.map(o => o.planeResN), 0.25);
-      const noseN_p50   = percentile(arr.map(o => o.noseProtrusionN), 0.50);
-      const sZ    = scale01(zRangeN_p75, cfg.ZRANGE_GOOD[0], cfg.ZRANGE_GOOD[1]);
-      const sPlan = scale01(planeN_p25,  cfg.PLANE_GOOD[0],  cfg.PLANE_GOOD[1]);
-      const sNose = scale01(noseN_p50,   cfg.NOSE_GOOD[0],   cfg.NOSE_GOOD[1]);
-      const depthScore = (0.5*sZ + 0.3*sPlan + 0.2*sNose) * 100;
-
-      const totalSteps = 4;
-      const passedSteps = ["left","right","smile","blink"].reduce((a,k)=>a+(st.passed[k]?1:0),0);
-      const actionQuality = (passedSteps / totalSteps) * 100;
-
-      const timely = st.latencies.filter(t => t >= cfg.RESPONSE_MIN_S && t <= cfg.RESPONSE_MAX_S).length;
-      const respScore = (st.latencies.length > 0) ? (timely / st.latencies.length) * 100 : 0;
-
+      const arr = st.depthSamples; const zRangeN_p75 = percentile(arr.map(o => o.zRangeN), 0.75); const planeN_p25 = percentile(arr.map(o => o.planeResN), 0.25); const noseN_p50 = percentile(arr.map(o => o.noseProtrusionN), 0.50);
+      const sZ = scale01(zRangeN_p75, cfg.ZRANGE_GOOD[0], cfg.ZRANGE_GOOD[1]); const sPlan = scale01(planeN_p25, cfg.PLANE_GOOD[0], cfg.PLANE_GOOD[1]); const sNose = scale01(noseN_p50, cfg.NOSE_GOOD[0], cfg.NOSE_GOOD[1]);
+      const depthScore = (0.5 * sZ + 0.3 * sPlan + 0.2 * sNose) * 100;
+      const totalSteps = 4; const passedSteps = ["left", "right", "smile", "blink"].reduce((a, k) => a + (st.passed[k] ? 1 : 0), 0); const actionQuality = (passedSteps / totalSteps) * 100;
+      const timely = st.latencies.filter(t => t >= cfg.RESPONSE_MIN_S && t <= dynamicMaxResponse()).length; const respScore = (st.latencies.length > 0) ? (timely / st.latencies.length) * 100 : 0;
       return Math.round(0.60 * depthScore + 0.25 * respScore + 0.15 * actionQuality);
     }
-    // 2D proxy
     const blinkMed = percentile(st.blinkAmps, 0.5);
-    const timing   = st.latencies.length ? (st.latencies.filter(t => t>=0.18 && t<=3).length / st.latencies.length) : 0.5;
-    const hold     = st.holdTotalFrames ? (st.holdGoodFrames / st.holdTotalFrames) : 0.5;
-    return Math.round(clamp((0.45*scale01(blinkMed,0.05,0.12) + 0.35*timing + 0.20*hold)*100, 0, 100));
+    const timing = st.latencies.length ? (st.latencies.filter(t => t >= cfg.RESPONSE_MIN_S && t <= dynamicMaxResponse()).length / st.latencies.length) : 0.5;
+    const hold = st.holdTotalFrames ? (st.holdGoodFrames / st.holdTotalFrames) : 0.5;
+    return Math.round(clamp((0.45 * scale01(blinkMed, 0.05, 0.12) + 0.35 * timing + 0.20 * hold) * 100, 0, 100));
+  }
+
+  function dynamicMaxResponse() {
+    const fps = clamp(fpsRef.current.ema || 30, 5, 60);
+    const holdSeconds = (cfg.HOLD_FRAMES_TURN / (fps / perfRef.current.inferEveryN));
+    return Math.max(cfg.RESPONSE_MAX_S, 2.0 + 0.5 * holdSeconds);
   }
 
   /* ---------- Continuous liveness ---------- */
   function computeLivenessComposite(st) {
-    const totalSteps = 4;
-    const passedSteps = ["left","right","smile","blink"].reduce((a,k)=>a+(st.passed[k]?1:0),0);
-    let progressCurrent = 0;
-    const step = stepsRef.current[currentStepRef.current];
-    if (step) {
-      if (step === "blink") {
-        const blinksInStep = blinkRef.current - st.stepStartBlink;
-        const target = blinkTargetRef.current || cfg.BLINK_TARGET;
-        progressCurrent = clamp(blinksInStep / target, 0, 1);
-      } else {
-        progressCurrent = clamp(holdPct / 100, 0, 1);
-      }
-    }
+    const totalSteps = 4; const passedSteps = ["left", "right", "smile", "blink"].reduce((a, k) => a + (st.passed[k] ? 1 : 0), 0);
+    let progressCurrent = 0; const step = stepsRef.current[currentStepRef.current];
+    if (step) { progressCurrent = step === "blink" ? clamp((blinkRef.current - st.stepStartBlink) / (blinkTargetRef.current || cfg.BLINK_TARGET), 0, 1) : clamp(holdPct / 100, 0, 1); }
     const stepScore = ((passedSteps + progressCurrent) / totalSteps) * 100;
-
-    const timely = st.latencies.filter(t => t >= cfg.RESPONSE_MIN_S && t <= cfg.RESPONSE_MAX_S).length;
-    const timingScore = (st.latencies.length > 0) ? (timely / st.latencies.length) * 100 : 65;
-
-    let blinkScore = 60;
-    if (st.blinkAmps.length) {
-      const med = percentile(st.blinkAmps, 0.5);
-      blinkScore = scale01(med, cfg.BLINK_AMP_GOOD[0], cfg.BLINK_AMP_GOOD[1]) * 100;
-    }
-
-    const smoothness = st.holdTotalFrames ? (st.holdGoodFrames / st.holdTotalFrames) : 0.65;
-    const smoothnessScore = smoothness * 100;
-
-    const live = 0.50 * stepScore + 0.22 * timingScore + 0.14 * blinkScore + 0.14 * smoothnessScore;
-    return Math.round(clamp(live, 0, 100));
+    const timely = st.latencies.filter(t => t >= cfg.RESPONSE_MIN_S && t <= dynamicMaxResponse()).length; const timingScore = (st.latencies.length > 0) ? (timely / st.latencies.length) * 100 : 65;
+    let blinkScore = 60; if (st.blinkAmps.length) { const med = percentile(st.blinkAmps, 0.5); blinkScore = scale01(med, cfg.BLINK_AMP_GOOD[0], cfg.BLINK_AMP_GOOD[1]) * 100; }
+    const smoothness = st.holdTotalFrames ? (st.holdGoodFrames / st.holdTotalFrames) : 0.65; const smoothnessScore = smoothness * 100;
+    return Math.round(clamp(0.50 * stepScore + 0.22 * timingScore + 0.14 * blinkScore + 0.14 * smoothnessScore, 0, 100));
   }
 
   /* ---------- Guidance builder ---------- */
   function buildGuidance(step, st) {
     if (!step) return { titleEn: "", titleBn: "", en: "", bn: "", severity: "progress", icon: "ℹ️" };
-    const yaw = smooth.current.YAW || 0;
-    const remainBlink = Math.max(0, (blinkTargetRef.current || cfg.BLINK_TARGET) - (blinkRef.current - st.stepStartBlink));
-    const stepInfo = INSTRUCTIONS[step];
-
-    if (step === "left") {
-      if (yaw < -cfg.YAW_MARGIN) {
-        return { titleEn: "Wrong way", titleBn: "ভুল দিক", en: "Rotate LEFT", bn: "বামে ঘোরান", severity: "warn", icon: "↩️" };
-      }
-      if (yaw < cfg.YAW_RAD) {
-        return { titleEn: "Turn Left", titleBn: "বামে তাকান", en: "Rotate a bit more LEFT", bn: "আরও একটু বামে ঘোরান", severity: "progress", icon: "↩️" };
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Good — hold still", bn: "ভালো — স্থির থাকুন", severity: "ok", icon: "✅" };
-    }
-    if (step === "right") {
-      if (yaw > cfg.YAW_MARGIN) {
-        return { titleEn: "Wrong way", titleBn: "ভুল দিক", en: "Rotate RIGHT", bn: "ডানে ঘোরান", severity: "warn", icon: "↪️" };
-      }
-      if (yaw > -cfg.YAW_RAD) {
-        return { titleEn: "Turn Right", titleBn: "ডানে তাকান", en: "Rotate a bit more RIGHT", bn: "আরও একটু ডানে ঘোরান", severity: "progress", icon: "↪️" };
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Good — hold still", bn: "ভালো — স্থির থাকুন", severity: "ok", icon: "✅" };
-    }
-    if (step === "smile") {
-      const wDelta = (smooth.current.WNORM || 0) - (st.calib.mwBase || 0);
-      const curveDelta = (smooth.current.CURVE || 0) - (st.calib.curveBase || 0);
-      const marDelta = (smooth.current.MAR || 0) - (st.calib.mar || 0);
-      const wide = wDelta >= 0.035;
-      const lifted = curveDelta >= 0.012;
-      const open = marDelta >= 0.06 || (smooth.current.MAR || 0) > Math.max(0.28, st.calib.mar + 0.05);
-      if (!(wide || lifted || open)) {
-        return { titleEn: "Smile", titleBn: "হাসি", en: "Smile wider / lift corners", bn: "আরও হাসুন / মুখের কোণা তুলুন", severity: "progress", icon: "😊" };
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Looks good — hold", bn: "ভালো — ধরে রাখুন", severity: "ok", icon: "✅" };
-    }
-    if (step === "blink") {
-      if (remainBlink > 0) {
-        return { titleEn: "Blink", titleBn: "চোখের পলক", en: `Blink ${remainBlink} more time${remainBlink > 1 ? "s" : ""}`, bn: `আর ${remainBlink} বার পলক দিন`, severity: "progress", icon: "👀" };
-      }
-      return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Great — done blinking", bn: "ভালো — ব্লিঙ্ক সম্পন্ন", severity: "ok", icon: "✅" };
-    }
+    const yaw = smooth.current.YAW || 0; const remainBlink = Math.max(0, (blinkTargetRef.current || cfg.BLINK_TARGET) - (blinkRef.current - st.stepStartBlink)); const stepInfo = INSTRUCTIONS[step];
+    if (step === "left") { if (yaw < -cfg.YAW_MARGIN) return { titleEn: "Wrong way", titleBn: "ভুল দিক", en: "Rotate LEFT", bn: "বামে ঘোরান", severity: "warn", icon: "↩️" }; if (yaw < cfg.YAW_RAD) return { titleEn: "Turn Left", titleBn: "বামে তাকান", en: "Rotate a bit more LEFT", bn: "আরও একটু বামে ঘোরান", severity: "progress", icon: "↩️" }; return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Good — hold still", bn: "ভালো — স্থির থাকুন", severity: "ok", icon: "✅" }; }
+    if (step === "right") { if (yaw > cfg.YAW_MARGIN) return { titleEn: "Wrong way", titleBn: "ভুল দিক", en: "Rotate RIGHT", bn: "ডানে ঘোরান", severity: "warn", icon: "↪️" }; if (yaw > -cfg.YAW_RAD) return { titleEn: "Turn Right", titleBn: "ডানে তাকান", en: "Rotate a bit more RIGHT", bn: "আরও একটু ডানে ঘোরান", severity: "progress", icon: "↪️" }; return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Good — hold still", bn: "ভালো — স্থির থাকুন", severity: "ok", icon: "✅" }; }
+    if (step === "smile") { const wDelta = (smooth.current.WNORM || 0) - (st.calib.mwBase || 0); const curveDelta = (smooth.current.CURVE || 0) - (st.calib.curveBase || 0); const marDelta = (smooth.current.MAR || 0) - (st.calib.mar || 0); const wide = wDelta >= cfg.SMILE_W_DELTA; const lifted = curveDelta >= 0.012; const open = marDelta >= 0.06 || (smooth.current.MAR || 0) > Math.max(0.28, st.calib.mar + 0.05); if (!(wide || lifted || open)) return { titleEn: "Smile", titleBn: "হাসি", en: "Smile wider / lift corners", bn: "আরও হাসুন / মুখের কোণা তুলুন", severity: "progress", icon: "😊" }; return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Looks good — hold", bn: "ভালো — ধরে রাখুন", severity: "ok", icon: "✅" }; }
+    if (step === "blink") { if (remainBlink > 0) return { titleEn: "Blink", titleBn: "চোখের পলক", en: `Blink ${remainBlink} more time${remainBlink > 1 ? "s" : ""}`, bn: `আর ${remainBlink} বার পলক দিন`, severity: "progress", icon: "👀" }; return { titleEn: "Hold", titleBn: "ধরে রাখুন", en: "Great — done blinking", bn: "ভালো — ব্লিঙ্ক সম্পন্ন", severity: "ok", icon: "✅" }; }
     return { titleEn: stepInfo?.titleEn || "", titleBn: stepInfo?.titleBn || "", en: stepInfo?.en || "", bn: stepInfo?.bn || "", severity: "progress", icon: stepInfo?.icon || "ℹ️" };
   }
 
-  /* ------------- drawing / overlays ------------- */
+  /* ------------- drawing / overlays (batched) ------------- */
   function drawMesh(ctx, pts, W, H) {
-    // draw mirrored like video (we already set mirror on ctx in the background image step)
-    ctx.save();
-    ctx.translate(W, 0); ctx.scale(-1, 1);
-    ctx.fillStyle = "rgba(45,212,191,0.55)";
-    for (let i = 0; i < pts.length; i += 8) {
-      const p = pts[i];
-      ctx.beginPath(); ctx.arc(p.x, p.y, 1.6, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
+    ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); ctx.fillStyle = "rgba(45,212,191,0.55)";
+    ctx.beginPath(); for (let i = 0; i < pts.length; i += 8) { const p = pts[i]; ctx.moveTo(p.x + 1.6, p.y); ctx.arc(p.x, p.y, 1.6, 0, Math.PI * 2); } ctx.fill(); ctx.restore();
   }
 
-  /* ---------- Passport capture (no HUD) ---------- */
+  /* ---------- Passport capture ---------- */
   async function capturePassport() {
-    const v = videoRef.current;
-    if (!v || v.readyState < 2) return { data_url: null, base64: null };
-
-    const frame = await grabBestFrameCanvas(v); // mirrored already
-    const ow = frame.width, oh = frame.height;
-
+    const v = videoRef.current; if (!v || v.readyState < 2) return { data_url: null, base64: null };
+    const frame = await grabBestFrameCanvas(v); const ow = frame.width, oh = frame.height;
     const box = lastBBoxRef.current || { x: ow * 0.25, y: oh * 0.20, w: ow * 0.50, h: oh * 0.60 };
     const padLeft = box.w * 0.50, padRight = box.w * 0.50, padTop = box.h * 1.00, padBottom = box.h * 0.60;
-
-    let sx = Math.max(0, Math.floor(box.x - padLeft));
-    let sy = Math.max(0, Math.floor(box.y - padTop));
-    let sw = Math.min(ow - sx, Math.ceil(box.w + padLeft + padRight));
-    let sh = Math.min(oh - sy, Math.ceil(box.h + padTop + padBottom));
-
+    let sx = Math.max(0, Math.floor(box.x - padLeft)); let sy = Math.max(0, Math.floor(box.y - padTop)); let sw = Math.min(ow - sx, Math.ceil(box.w + padLeft + padRight)); let sh = Math.min(oh - sy, Math.ceil(box.h + padTop + padBottom));
     const targetAR = 3 / 4, curAR = sw / sh;
-    if (curAR > targetAR) {
-      const newH = Math.round(sw / targetAR); const delta = newH - sh;
-      sy = Math.max(0, sy - Math.round(delta * 0.60)); sh = Math.min(oh - sy, newH);
-    } else {
-      const newW = Math.round(sh * targetAR); const delta = newW - sw;
-      sx = Math.max(0, sx - Math.round(delta / 2)); sw = Math.min(ow - sx, newW);
-    }
-
-    const outW = 900, outH = 1200;
-    const out = document.createElement("canvas"); out.width = outW; out.height = outH;
-    const outctx = out.getContext("2d");
-    outctx.imageSmoothingEnabled = true; outctx.imageSmoothingQuality = "high";
-    outctx.drawImage(frame, sx, sy, sw, sh, 0, 0, outW, outH);
-    enhanceCanvasInPlace(outctx, outW, outH);
-    const dataUrl = out.toDataURL("image/jpeg", 0.96);
-    return { data_url: dataUrl, base64: dataUrl.split(",")[1] };
+    if (curAR > targetAR) { const newH = Math.round(sw / targetAR); const delta = newH - sh; sy = Math.max(0, sy - Math.round(delta * 0.60)); sh = Math.min(oh - sy, newH); }
+    else { const newW = Math.round(sh * targetAR); const delta = newW - sw; sx = Math.max(0, sx - Math.round(delta / 2)); sw = Math.min(ow - sx, newW); }
+    const outW = 900, outH = 1200; const out = document.createElement("canvas"); out.width = outW; out.height = outH; const outctx = out.getContext("2d"); outctx.imageSmoothingEnabled = true; outctx.imageSmoothingQuality = "high"; outctx.drawImage(frame, sx, sy, sw, sh, 0, 0, outW, outH); enhanceCanvasInPlace(outctx, outW, outH); const dataUrl = out.toDataURL("image/jpeg", 0.96); return { data_url: dataUrl, base64: dataUrl.split(",")[1] };
   }
-  async function grabBestFrameCanvas(video) {
-    const makeCanvas = (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; };
-    const c = makeCanvas(video.videoWidth, video.videoHeight);
-    const cx = c.getContext("2d");
-    cx.save(); cx.translate(c.width, 0); cx.scale(-1, 1);
-    cx.drawImage(video, 0, 0);
-    cx.restore();
-    return c;
-  }
+  async function grabBestFrameCanvas(video) { const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight; const cx = c.getContext("2d"); cx.save(); cx.translate(c.width, 0); cx.scale(-1, 1); cx.drawImage(video, 0, 0); cx.restore(); return c; }
   function enhanceCanvasInPlace(ctx, w, h) {
-    const img = ctx.getImageData(0, 0, w, h); const d = img.data; const n = d.length;
-    let rSum = 0, gSum = 0, bSum = 0, count = n / 4;
+    const img = ctx.getImageData(0, 0, w, h); const d = img.data; const n = d.length; let rSum = 0, gSum = 0, bSum = 0, count = n / 4;
     for (let i = 0; i < n; i += 4) { rSum += d[i]; gSum += d[i + 1]; bSum += d[i + 2]; }
-    const rMean = rSum / count, gMean = gSum / count, bMean = bSum / count;
-    const avg = (rMean + gMean + bMean) / 3 || 1;
-    const gR = avg / (rMean || 1), gG = avg / (gMean || 1), gB = avg / (bMean || 1);
+    const rMean = rSum / count, gMean = gSum / count, bMean = bSum / count; const avg = (rMean + gMean + bMean) / 3 || 1; const gR = avg / (rMean || 1), gG = avg / (gMean || 1), gB = avg / (bMean || 1);
     const hist = new Uint32Array(256);
-    for (let i = 0; i < n; i += 4) {
-      let r = clamp(Math.round(d[i] * gR), 0, 255);
-      let g = clamp(Math.round(d[i + 1] * gG), 0, 255);
-      let b = clamp(Math.round(d[i + 2] * gB), 0, 255);
-      d[i] = r; d[i + 1] = g; d[i + 2] = b;
-      const y = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b); hist[y]++;
-    }
-    const total = count;
-    const lowCut = Math.round(total * 0.02), highCut = Math.round(total * 0.98);
-    let acc = 0, low = 0, high = 255;
-    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= lowCut) { low = v; break; } }
-    acc = 0;
-    for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= total - highCut) { high = v; break; } }
-    const eps = Math.max(1, high - low); const gain = 255 / eps, bias = -low * gain; const gamma = 0.95;
-    for (let i = 0; i < n; i += 4) {
-      let r = clamp((d[i] * gain + bias), 0, 255);
-      let g = clamp((d[i + 1] * gain + bias), 0, 255);
-      let b = clamp((d[i + 2] * gain + bias), 0, 255);
-      d[i]     = Math.round(255 * Math.pow(r / 255, gamma));
-      d[i + 1] = Math.round(255 * Math.pow(g / 255, gamma));
-      d[i + 2] = Math.round(255 * Math.pow(b / 255, gamma));
-    }
+    for (let i = 0; i < n; i += 4) { let r = clamp(Math.round(d[i] * gR), 0, 255), g = clamp(Math.round(d[i + 1] * gG), 0, 255), b = clamp(Math.round(d[i + 2] * gB), 0, 255); d[i] = r; d[i + 1] = g; d[i + 2] = b; const y = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b); hist[y]++; }
+    const total = count, lowCut = Math.round(total * 0.02), highCut = Math.round(total * 0.98); let acc = 0, low = 0, high = 255; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= lowCut) { low = v; break; } } acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= total - highCut) { high = v; break; } }
+    const eps = Math.max(1, high - low); const gain = 255 / eps, bias = -low * gain, gamma = 0.95; for (let i = 0; i < n; i += 4) { let r = clamp((d[i] * gain + bias), 0, 255), g = clamp((d[i + 1] * gain + bias), 0, 255), b = clamp((d[i + 2] * gain + bias), 0, 255); d[i] = Math.round(255 * Math.pow(r / 255, gamma)); d[i + 1] = Math.round(255 * Math.pow(g / 255, gamma)); d[i + 2] = Math.round(255 * Math.pow(b / 255, gamma)); }
     ctx.putImageData(img, 0, 0);
   }
-  async function copySnapshotBase64() {
-    const shot = await capturePassport();
-    if (!shot?.base64) return;
-    try { await navigator.clipboard.writeText(shot.base64); alert("Passport photo base64 copied."); }
-    catch { console.log("Photo base64:", shot.base64.slice(0, 64) + "..."); }
-  }
+  async function copySnapshotBase64() { const shot = await capturePassport(); if (!shot?.base64) return; try { await navigator.clipboard.writeText(shot.base64); alert("Passport photo base64 copied."); } catch { console.log("Photo base64:", shot.base64.slice(0, 64) + "..."); } }
 
-  const allDone  = currentStep >= steps.length;
-  const decided  = finalPass !== null;
-  const liveNow  = livenessScore;
-  const showPass = decided ? finalPass : (spoofScore >= 70 && liveNow >= 75);
-  const activeStep = steps[currentStep];
+  const allDone = currentStep >= steps.length; const decided = finalPass !== null; const liveNow = livenessScore; const showPass = decided ? finalPass : (spoofScore >= 70 && liveNow >= 75); const activeStep = steps[currentStep];
 
   return (
     <div className="grid lg:grid-cols-5 gap-6">
@@ -781,25 +542,14 @@ export default function LivenessApp() {
           <video ref={videoRef} className="w-full h-auto hidden" muted playsInline />
           <canvas ref={canvasRef} className="w-full h-auto block" />
 
-          <PromptHUD
-            phase={phase}
-            calibPct={calibPct}
-            cameraOn={cameraOn}
-            cameraReady={cameraReady}
-            faces={faceCount}
-            done={allDone}
-            finalPass={finalPass}
-            stepKey={activeStep}
-          />
+          <PromptHUD phase={phase} calibPct={calibPct} cameraOn={cameraOn} cameraReady={cameraReady} faces={faceCount} done={allDone} finalPass={finalPass} stepKey={activeStep} />
 
           {!cameraOn && (
             <div className="absolute inset-0 grid place-items-center bg-slate-900/40 backdrop-blur">
               <div className="p-8 text-center">
                 <div className="text-xl font-semibold mb-2">Webcam is off</div>
                 <div className="text-slate-300 mb-4">Click start to begin liveness verification.</div>
-                <button className="btn" disabled={!modelReady} onClick={startCamera}>
-                  {modelReady ? "Start verification" : "Loading model…"}
-                </button>
+                <button className="btn" disabled={!modelReady} onClick={startCamera}>{modelReady ? "Start verification" : "Loading model…"}</button>
                 {error && <div className="text-rose-400 mt-3 text-sm">{error}</div>}
               </div>
             </div>
@@ -857,30 +607,30 @@ export default function LivenessApp() {
             </div>
           </div>
         )}
+
+        {/* Timing debug */}
+        {cameraOn && (
+          <div className="card p-4">
+            <div className="text-lg font-semibold mb-2">Timing Debug</div>
+            <div className="text-sm text-slate-300">
+              <div>Latencies (s): {stateRef.current.latencies.map(x => x.toFixed(2)).join(", ") || "—"}</div>
+              <div>FPS (est): {(fpsRef.current.ema || 0).toFixed(1)}</div>
+              <div>Max allowed response (s): {dynamicMaxResponse().toFixed(2)}</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* RIGHT COLUMN */}
       <div className="lg:col-span-2 space-y-4">
         {cameraOn && (
           <>
-            <LiveCard getIndicator={() => {
-              const st = stateRef.current;
-              const score = computeLivenessComposite(st);
-              const label = score >= 75 ? "Strong" : score >= 50 ? "In Progress" : "Low";
-              const reasons = liveReasons(st);
-              return { score, label, reasons };
-            }} />
-
-            <PadCard getIndicator={() => {
-              const st = stateRef.current;
-              const score = computePadRobust(st);
-              const label = score >= 75 ? "Live" : (score < 50 ? "Block" : "Suspicious");
-              const reasons = padReasons(st);
-              return { score, label, reasons };
-            }} />
+            <LiveCard getIndicator={() => { const st = stateRef.current; const score = computeLivenessComposite(st); const label = score >= 75 ? "Strong" : score >= 50 ? "In Progress" : "Low"; const reasons = liveReasons(st, dynamicMaxResponse()); return { score, label, reasons }; }} />
+            <PadCard getIndicator={() => { const st = stateRef.current; const score = computePadRobust(st); const label = score >= 75 ? "Live" : (score < 50 ? "Block" : "Suspicious"); const reasons = padReasons(st, dynamicMaxResponse()); return { score, label, reasons }; }} />
           </>
         )}
 
+        {/* Checklist */}
         <div className="card p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -893,9 +643,7 @@ export default function LivenessApp() {
           </div>
           <ul className="mt-3 space-y-2">
             {steps.map((s) => {
-              const isCurrent = steps[currentStep] === s;
-              const passed = stateRef.current.passed[s];
-              const data = INSTRUCTIONS[s];
+              const isCurrent = steps[currentStep] === s; const passed = stateRef.current.passed[s]; const data = INSTRUCTIONS[s];
               return (
                 <li key={s} className={`flex items-center gap-3 p-3 rounded-xl border ${isCurrent ? "bg-slate-800/60 border-slate-700" : "border-slate-800"}`}>
                   <div className={`w-8 h-8 grid place-items-center rounded-full ${passed ? "bg-emerald-600/20" : isCurrent ? "bg-yellow-600/20" : "bg-slate-600/20"}`}>
@@ -906,9 +654,7 @@ export default function LivenessApp() {
                     <div className="text-[12px] text-slate-400 leading-tight">{data.en}</div>
                     <div className="text-[12px] text-slate-400 leading-tight">{data.bn}</div>
                   </div>
-                  <span className={`badge ${passed ? "badge-green" : (isCurrent ? "badge-yellow" : "badge-red")}`}>
-                    {passed ? "Done" : (isCurrent ? "Now" : "Wait")}
-                  </span>
+                  <span className={`badge ${passed ? "badge-green" : (isCurrent ? "badge-yellow" : "badge-red")}`}>{passed ? "Done" : (isCurrent ? "Now" : "Wait")}</span>
                 </li>
               );
             })}
@@ -1051,7 +797,7 @@ function GuidanceStrip({ guide }) {
   const tone = guide.severity
   const toneCls = tone === "ok" ? "border-emerald-500/40 bg-emerald-900/30"
     : tone === "warn" ? "border-amber-500/40 bg-amber-900/30"
-    : "border-white/10 bg-slate-900/50"
+      : "border-white/10 bg-slate-900/50"
   return (
     <div className={`w-full rounded-2xl border px-4 py-3 shadow-lg backdrop-blur ${toneCls}`}>
       <div className="flex items-start gap-3">
