@@ -16,7 +16,7 @@ const percentile = (arr, p) => {
   const lo = Math.floor(idx), hi = Math.ceil(idx), t = idx - lo;
   return a[lo] * (1 - t) + a[hi] * t;
 };
-function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }
 
 /* FaceMesh indices we use */
 const IDX = {
@@ -54,39 +54,39 @@ function planeResidualNorm(pts, keys, faceW) {
   }
   const n = X.length; if (n < 4) return 0;
 
-  const xtx = [[0,0,0],[0,0,0],[0,0,0]], xtz = [0,0,0];
-  for (let i=0;i<n;i++) {
-    const [x,y,o] = X[i], z = Z[i];
-    xtx[0][0]+=x*x; xtx[0][1]+=x*y; xtx[0][2]+=x*o;
-    xtx[1][0]+=y*x; xtx[1][1]+=y*y; xtx[1][2]+=y*o;
-    xtx[2][0]+=o*x; xtx[2][1]+=o*y; xtx[2][2]+=o*o;
-    xtz[0]+=x*z; xtz[1]+=y*z; xtz[2]+=o*z;
+  const xtx = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], xtz = [0, 0, 0];
+  for (let i = 0; i < n; i++) {
+    const [x, y, o] = X[i], z = Z[i];
+    xtx[0][0] += x * x; xtx[0][1] += x * y; xtx[0][2] += x * o;
+    xtx[1][0] += y * x; xtx[1][1] += y * y; xtx[1][2] += y * o;
+    xtx[2][0] += o * x; xtx[2][1] += o * y; xtx[2][2] += o * o;
+    xtz[0] += x * z; xtz[1] += y * z; xtz[2] += o * z;
   }
   const m = xtx;
-  const det = m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1]) - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0]) + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  const det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
   if (Math.abs(det) < 1e-9) return 0;
-  const inv = [[0,0,0],[0,0,0],[0,0,0]];
-  inv[0][0]=(m[1][1]*m[2][2]-m[1][2]*m[2][1])/det;
-  inv[0][1]=(m[0][2]*m[2][1]-m[0][1]*m[2][2])/det;
-  inv[0][2]=(m[0][1]*m[1][2]-m[0][2]*m[1][1])/det;
-  inv[1][0]=(m[1][2]*m[2][0]-m[1][0]*m[2][2])/det;
-  inv[1][1]=(m[0][0]*m[2][2]-m[0][2]*m[2][0])/det;
-  inv[1][2]=(m[0][2]*m[1][0]-m[0][0]*m[1][2])/det;
-  inv[2][0]=(m[1][0]*m[2][1]-m[1][1]*m[2][0])/det;
-  inv[2][1]=(m[0][1]*m[2][0]-m[0][0]*m[2][1])/det;
-  inv[2][2]=(m[0][0]*m[1][1]-m[0][1]*m[1][0])/det;
+  const inv = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  inv[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) / det;
+  inv[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / det;
+  inv[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / det;
+  inv[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) / det;
+  inv[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / det;
+  inv[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / det;
+  inv[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) / det;
+  inv[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / det;
+  inv[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / det;
   const beta = [
-    inv[0][0]*xtz[0] + inv[0][1]*xtz[1] + inv[0][2]*xtz[2],
-    inv[1][0]*xtz[0] + inv[1][1]*xtz[1] + inv[1][2]*xtz[2],
-    inv[2][0]*xtz[0] + inv[2][1]*xtz[1] + inv[2][2]*xtz[2],
+    inv[0][0] * xtz[0] + inv[0][1] * xtz[1] + inv[0][2] * xtz[2],
+    inv[1][0] * xtz[0] + inv[1][1] * xtz[1] + inv[1][2] * xtz[2],
+    inv[2][0] * xtz[0] + inv[2][1] * xtz[1] + inv[2][2] * xtz[2],
   ];
   let se = 0;
-  for (let i=0;i<n;i++) {
-    const [x,y,o] = X[i], z = Z[i];
-    const zhat = beta[0]*x + beta[1]*y + beta[2]*o;
-    const r = z - zhat; se += r*r;
+  for (let i = 0; i < n; i++) {
+    const [x, y, o] = X[i], z = Z[i];
+    const zhat = beta[0] * x + beta[1] * y + beta[2] * o;
+    const r = z - zhat; se += r * r;
   }
-  const rmse = Math.sqrt(se/n);
+  const rmse = Math.sqrt(se / n);
   return rmse;
 }
 function extractDepthFeatures(pts) {
@@ -140,7 +140,7 @@ function mouthFeatures(pts) {
   const wNorm = dist(pts[IDX.mouthLeft], pts[IDX.mouthRight]) / faceW;
   const hNorm = dist(pts[IDX.mouthTop], pts[IDX.mouthBot]) / faceW;
   const yCorners = (pts[IDX.mouthLeft].y + pts[IDX.mouthRight].y) / 2;
-  const yCenter  = (pts[IDX.mouthTop].y + pts[IDX.mouthBot].y) / 2;
+  const yCenter = (pts[IDX.mouthTop].y + pts[IDX.mouthBot].y) / 2;
   const curve = (yCenter - yCorners) / faceW;  // corners higher (smile) → positive
   return { wNorm, hNorm, curve };
 }
@@ -228,18 +228,69 @@ export default function LivenessApp() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const log = (...args) => console.log("[Liveness] ", ...args);
       try {
-        await tf.ready();
-        if (tf.backend().name !== "webgl") { try { await tf.setBackend("webgl"); await tf.ready(); } catch {} }
-        const detector = await faceLandmarksDetection.createDetector(
-          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
-          { runtime: "mediapipe", refineLandmarks: true, solutionPath: "https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh" }
-        );
-        if (!cancelled) {
-          modelRef.current = detector;
-          setModelReady(true);
+        // Try WebGL first; if it fails, we’ll fall back later.
+        try {
+          await tf.setBackend("webgl");
+          await tf.ready();
+          log("TF backend:", tf.backend().name);
+        } catch (e) {
+          log("WebGL backend failed, will try CPU later:", e);
         }
-      } catch (e) { console.error(e); setError(String(e)); }
+
+        // Prefer MediaPipe runtime (fastest) using self-hosted assets.
+        const mpCfg = {
+          runtime: "mediapipe",
+          refineLandmarks: true,
+          // IMPORTANT: self-host the assets so CSP/CDN doesn’t break prod
+          solutionPath: "/mediapipe/face_mesh",
+        };
+        try {
+          const detector = await faceLandmarksDetection.createDetector(
+            faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+            mpCfg
+          );
+          if (!cancelled) {
+            modelRef.current = detector;
+            setModelReady(true);
+            log("Detector ready (mediapipe runtime).");
+            return;
+          }
+        } catch (e) {
+          log("Mediapipe runtime failed (likely assets not served):", e);
+        }
+
+        // Fallback: TFJS runtime model (heavier but no mediapipe assets).
+        try {
+          // If WebGL didn’t work, use CPU to be safe on locked-down servers.
+          if (tf.backend().name !== "webgl") {
+            await tf.setBackend("cpu");
+            await tf.ready();
+            log("TF backend fallback:", tf.backend().name);
+          }
+          const tfCfg = {
+            runtime: "tfjs",
+            refineLandmarks: true,
+          };
+          const detector = await faceLandmarksDetection.createDetector(
+            faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+            tfCfg
+          );
+          if (!cancelled) {
+            modelRef.current = detector;
+            setModelReady(true);
+            log("Detector ready (tfjs runtime).");
+            return;
+          }
+        } catch (e) {
+          log("TFJS runtime fallback failed:", e);
+          throw e;
+        }
+      } catch (e) {
+        console.error("[Liveness] Detector init failed:", e);
+        setError("Detector failed to initialize. See console logs.");
+      }
     })();
     return () => { cancelled = true; cancelAnimationFrame(rafRef.current); };
   }, []);
@@ -247,15 +298,29 @@ export default function LivenessApp() {
   /* camera control */
   async function startCamera() {
     try {
-      if (!modelReady) return;
+      if (!modelReady) {
+        setError("Model not ready yet. Please wait a moment.");
+        return;
+      }
       const v = videoRef.current;
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false
       });
       v.srcObject = stream;
+      // setCameraReady(false);
+      // await v.play();
       setCameraReady(false);
-      await v.play();
+      // Ensure metadata (width/height) available before we render
+      await new Promise((res) => {
+        if (v.readyState >= 2) return res();
+        const onLoaded = () => { v.removeEventListener("loadedmetadata", onLoaded); res(); };
+        v.addEventListener("loadedmetadata", onLoaded, { once: true });
+      });
+      try { await v.play(); } catch (e) {
+        // iOS/Safari sometimes needs a second attempt after a user gesture
+        console.warn("video.play() rejected:", e);
+      }
       setCameraOn(true); setCameraReady(true);
       hardReset(); setPhase("calibrate");
     } catch (e) { console.error(e); setError(String(e)); }
@@ -281,7 +346,7 @@ export default function LivenessApp() {
         const v = videoRef.current;
         const stream = v?.srcObject;
         if (stream) stream.getTracks().forEach(t => t.stop());
-      } catch {}
+      } catch { }
       cancelAnimationFrame(rafRef.current);
     };
   }, []);
@@ -337,13 +402,13 @@ export default function LivenessApp() {
       const zRangeN_p75 = percentile(arr.map(o => o.zRangeN), 0.75);
       const planeN_p25 = percentile(arr.map(o => o.planeResN), 0.25);
       const noseN_p50 = percentile(arr.map(o => o.noseProtrusionN), 0.50);
-      const sZ    = scale01(zRangeN_p75, cfg.ZRANGE_GOOD[0], cfg.ZRANGE_GOOD[1]);
-      const sPlan = scale01(planeN_p25,  cfg.PLANE_GOOD[0],  cfg.PLANE_GOOD[1]);
-      const sNose = scale01(noseN_p50,   cfg.NOSE_GOOD[0],   cfg.NOSE_GOOD[1]);
+      const sZ = scale01(zRangeN_p75, cfg.ZRANGE_GOOD[0], cfg.ZRANGE_GOOD[1]);
+      const sPlan = scale01(planeN_p25, cfg.PLANE_GOOD[0], cfg.PLANE_GOOD[1]);
+      const sNose = scale01(noseN_p50, cfg.NOSE_GOOD[0], cfg.NOSE_GOOD[1]);
       depthScore = (0.5 * sZ + 0.3 * sPlan + 0.2 * sNose) * 100;
     }
     const totalSteps = 4;
-    const passedSteps = ["left","right","smile","blink"].reduce((a,k)=>a+(st.passed[k]?1:0),0);
+    const passedSteps = ["left", "right", "smile", "blink"].reduce((a, k) => a + (st.passed[k] ? 1 : 0), 0);
     const actionQuality = (passedSteps / totalSteps) * 100;
 
     const timely = st.latencies.filter(t => t >= cfg.RESPONSE_MIN_S && t <= cfg.RESPONSE_MAX_S).length;
@@ -356,7 +421,7 @@ export default function LivenessApp() {
   /* ---------- Continuous liveness ---------- */
   function computeLivenessComposite(st) {
     const totalSteps = 4;
-    const passedSteps = ["left","right","smile","blink"].reduce((a,k)=>a+(st.passed[k]?1:0),0);
+    const passedSteps = ["left", "right", "smile", "blink"].reduce((a, k) => a + (st.passed[k] ? 1 : 0), 0);
     let progressCurrent = 0;
     const step = stepsRef.current[currentStepRef.current];
     if (step) {
@@ -478,9 +543,9 @@ export default function LivenessApp() {
     const { wNorm, hNorm, curve } = mouthFeatures(pts);
 
     const a = 0.2;
-    smooth.current.EAR   = lerp(smooth.current.EAR   || EAR,   EAR,   a);
-    smooth.current.MAR   = lerp(smooth.current.MAR   || MAR,   MAR,   a);
-    smooth.current.YAW   = lerp(smooth.current.YAW   || YAW,   YAW,   a);
+    smooth.current.EAR = lerp(smooth.current.EAR || EAR, EAR, a);
+    smooth.current.MAR = lerp(smooth.current.MAR || MAR, MAR, a);
+    smooth.current.YAW = lerp(smooth.current.YAW || YAW, YAW, a);
     smooth.current.WNORM = lerp(smooth.current.WNORM || wNorm, wNorm, a);
     smooth.current.HNORM = lerp(smooth.current.HNORM || hNorm, hNorm, a);
     smooth.current.CURVE = lerp(smooth.current.CURVE || curve, curve, a);
@@ -502,7 +567,7 @@ export default function LivenessApp() {
         st.calib.mwBase = st.calib.mwSum / st.calib.samples;
         st.calib.curveBase = st.calib.curveSum / st.calib.samples;
         st.calib.EAR_CLOSED_DYN = Math.max(cfg.EAR_CLOSED, st.calib.ear - 0.06);
-        st.calib.EAR_OPEN_DYN   = Math.max(cfg.EAR_OPEN,   st.calib.ear - 0.02);
+        st.calib.EAR_OPEN_DYN = Math.max(cfg.EAR_OPEN, st.calib.ear - 0.02);
         setPhase("run");
         st.stepStartTime = performance.now();
         st.stepStartBlink = blinkRef.current;
@@ -526,10 +591,10 @@ export default function LivenessApp() {
       const now = performance.now();
       const due = st.postCapture.due;
       if (now >= due) {
-        const neutralYaw   = Math.abs(smooth.current.YAW) < cfg.NEUTRAL_YAW;
+        const neutralYaw = Math.abs(smooth.current.YAW) < cfg.NEUTRAL_YAW;
         // FIX: use cfg.NEUTRAL_MAR_DELTA instead of non-existent st.calib.MAR_DELTA
         const neutralSmile = smooth.current.MAR < (st.calib.mar + (cfg.NEUTRAL_MAR_DELTA ?? 0.04));
-        const eyesOk       = smooth.current.EAR > (st.calib.ear - 0.03);
+        const eyesOk = smooth.current.EAR > (st.calib.ear - 0.03);
         if (neutralYaw && neutralSmile && eyesOk) {
           st.postCapture.hold++;
           if (st.postCapture.hold >= 5) {
@@ -552,7 +617,7 @@ export default function LivenessApp() {
   function updateBlink(EAR) {
     const st = stateRef.current;
     const eyesClosed = EAR < (st.calib?.EAR_CLOSED_DYN ?? cfg.EAR_CLOSED);
-    const reOpen     = EAR > (st.calib?.EAR_OPEN_DYN   ?? cfg.EAR_OPEN);
+    const reOpen = EAR > (st.calib?.EAR_OPEN_DYN ?? cfg.EAR_OPEN);
 
     if (!eyesClosed) st.lastOpenEAR = EAR;
 
@@ -563,7 +628,7 @@ export default function LivenessApp() {
       st.prevEyesClosed = false;
       if (st.closing) {
         const open = st.lastOpenEAR || st.calib.ear || EAR;
-        const amp  = Math.max(0, open - st.minEAR);
+        const amp = Math.max(0, open - st.minEAR);
         const now = performance.now(); const dt = now - (st.lastBlinkTs || 0);
         if (amp >= cfg.BLINK_MIN_AMP && dt >= cfg.BLINK_MIN_INTERVAL_MS) {
           st.blinkAmps.push(amp); if (st.blinkAmps.length > 20) st.blinkAmps.shift();
@@ -586,7 +651,7 @@ export default function LivenessApp() {
     const minGate = Math.max(cfg.RESPONSE_MIN_S, cfg.MIN_STEP_TIME_S);
 
     let ok = false;
-    if (step === "left")       { ok = smooth.current.YAW > (cfg.YAW_RAD + cfg.YAW_MARGIN); }
+    if (step === "left") { ok = smooth.current.YAW > (cfg.YAW_RAD + cfg.YAW_MARGIN); }
     else if (step === "right") { ok = smooth.current.YAW < -(cfg.YAW_RAD + cfg.YAW_MARGIN); }
     else if (step === "smile") {
       const wDelta = (smooth.current.WNORM || 0) - (st.calib.mwBase || 0);
@@ -778,7 +843,7 @@ export default function LivenessApp() {
       let r = clamp((d[i] * gain + bias), 0, 255);
       let g = clamp((d[i + 1] * gain + bias), 0, 255);
       let b = clamp((d[i + 2] * gain + bias), 0, 255);
-      d[i]     = Math.round(255 * Math.pow(r / 255, gamma));
+      d[i] = Math.round(255 * Math.pow(r / 255, gamma));
       d[i + 1] = Math.round(255 * Math.pow(g / 255, gamma));
       d[i + 2] = Math.round(255 * Math.pow(b / 255, gamma));
     }
@@ -792,9 +857,9 @@ export default function LivenessApp() {
     catch { console.log("Photo base64:", shot.base64.slice(0, 64) + "..."); }
   }
 
-  const allDone  = currentStep >= steps.length;
-  const decided  = finalPass !== null;
-  const liveNow  = livenessScore;
+  const allDone = currentStep >= steps.length;
+  const decided = finalPass !== null;
+  const liveNow = livenessScore;
   const showPass = decided ? finalPass : (spoofScore >= 70 && liveNow >= 75);
 
   const activeStep = steps[currentStep];
@@ -1087,7 +1152,7 @@ function GuidanceStrip({ guide }) {
   const tone = guide.severity
   const toneCls = tone === "ok" ? "border-emerald-500/40 bg-emerald-900/30"
     : tone === "warn" ? "border-amber-500/40 bg-amber-900/30"
-    : "border-white/10 bg-slate-900/50"
+      : "border-white/10 bg-slate-900/50"
   return (
     <div className={`w-full rounded-2xl border px-4 py-3 shadow-lg backdrop-blur ${toneCls}`}>
       <div className="flex items-start gap-3">
