@@ -929,7 +929,7 @@ export default function LivenessApp() {
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-lg font-semibold">Result</div>
-                <div className="text-slate-300 text-sm">Liveness score & anti-spoof checks</div>
+                <div className="text-slate-300 text-sm">Liveness score & anti-spoofing checks</div>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-bold">{showPass ? "PASSED" : "FAILED"}</div>
@@ -938,7 +938,7 @@ export default function LivenessApp() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
               <Metric label="Liveness Score" value={`${liveNow}/100`} ok={liveNow >= 75} />
-              <Metric label="Anti-Spoof Score" value={`${spoofScore}/100`} ok={spoofScore >= 70} />
+              <Metric label="Anti-Spoofing Score" value={`${spoofScore}/100`} ok={spoofScore >= 70} />
               <Metric label="Depth Var (zRangeN)" value={(smooth.current.depthVar || 0).toFixed(4)} ok={(smooth.current.depthVar || 0) >= 0.02} />
               <Metric label="Blink Count" value={blinkCount} ok={blinkCount >= 2} />
             </div>
@@ -1047,7 +1047,7 @@ function PadCard({ getIndicator }) {
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between">
-        <div className="text-lg font-semibold">Anti-Spoof Status</div>
+        <div className="text-lg font-semibold">Anti-Spoofing Status</div>
         <span className={`badge ${badge}`}>{ind.label}</span>
       </div>
       <div className="mt-2 text-sm">
